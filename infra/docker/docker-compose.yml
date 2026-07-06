@@ -1,0 +1,21 @@
+services:
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ../../apps/web:/app
+    env_file:
+      - ../../apps/web/.env.local
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "3000:3000"
+
+  worker:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - ../../services/worker:/app
+    env_file:
+      - ../../services/worker/.env.local
+    command: sh -c "pip install -e . && python -m worker.main"
+

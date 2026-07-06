@@ -1,0 +1,178 @@
+import json
+import socket
+from contextlib import contextmanager
+from functools import lru_cache
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
+
+@lru_cache(maxsize=32)
+def _resolve_supabase_ipv6(hostname: str) -> str | None:
+    """Resolve Supabase direct DB hosts even when the local resolver drops AAAA records."""
+    try:
+        infos = socket.getaddrinfo(hostname, 5432, socket.AF_INET6, socket.SOCK_STREAM)
+        if infos:
+            return infos[0][4][0]
+    except socket.gaierror:
+        pass
+
+    request = Request(
+        f"https://dns.google/resolve?name={hostname}&type=AAAA",
+        headers={"Accept": "application/dns-json"},
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            payload = json.load(response)
+    except OSError:
+        return None
+
+    for answer in payload.get("Answer") or []:
+        if answer.get("type") == 28 and answer.get("data"):
+            return answer["data"]
+
+    return None
+
+
+def _connection_kwargs(database_url: str) -> dict[str, str]:
+    parsed = urlparse(database_url)
+    hostname = parsed.hostname or ""
+    if hostname.startswith("db.") and hostname.endswith(".supabase.co"):
+        ipv6 = _resolve_supabase_ipv6(hostname)
+        if ipv6:
+            return {"hostaddr": ipv6}
+
+    return {}
+
+
+def connect():
+    import psycopg
+
+    from worker.config import load_config
+
+    config = load_config()
+    return psycopg.connect(
+        config.database_url,
+        row_factory=psycopg.rows.dict_row,
+        **_connection_kwargs(config.database_url),
+    )
+
+
+@contextmanager
+def get_cursor():
+    with connect() as conn:
+        with conn.cursor() as cur:
+            yield cur
+
+
+def claim_next_job():
+    sql = """
+    update file_jobs
+       set status = 'running',
+           attempt_count = attempt_count + 1,
+           started_at = now()
+     where id = (
+       select id
+         from file_jobs
+        where status = 'queued'
+        order by created_at asc
+        for update skip locked
+        limit 1
+     )
+    returning id, user_id, file_id, job_type
+    """
+    with get_cursor() as cur:
+        cur.execute(sql)
+        return cur.fetchone()
+
+
+def mark_job_running(job_id: str):
+    sql = """
+    update file_jobs
+       set status = 'running',
+           started_at = coalesce(started_at, now())
+     where id = %s
+    """
+    with get_cursor() as cur:
+        cur.execute(sql, (job_id,))
+
+
+def mark_job_succeeded(job_id: str):
+    sql = """
+    update file_jobs
+       set status = 'succeeded',
+           finished_at = now()
+     where id = %s
+    """
+    with get_cursor() as cur:
+        cur.execute(sql, (job_id,))
+
+
+def mark_file_processed(file_id: str):
+    sql = """
+    update files
+       set status = 'processed'
+     where id = %s
+    """
+    with get_cursor() as cur:
+        cur.execute(sql, (file_id,))
+
+
+def insert_claim_row(row: dict):
+    sql = """
+    insert into claims (
+      id, user_id, source_file_id, provider_name_raw, provider_name_normalized,
+      service_date, normalized_payload
+    ) values (
+      gen_random_uuid(), %s, %s, %s, %s, %s, %s::jsonb
+    )
+    """
+    import json
+
+    with get_cursor() as cur:
+        cur.execute(
+            sql,
+            (
+                row["user_id"],
+                row["source_file_id"],
+                row.get("provider_name_raw"),
+                row.get("provider_name_normalized"),
+                row.get("service_date"),
+                json.dumps(row["normalized_payload"]),
+            ),
+        )
+
+
+def insert_payment_row(row: dict):
+    sql = """
+    insert into payments (
+      id, user_id, source_file_id, provider_name_raw, provider_name_normalized,
+      amount, normalized_payload
+    ) values (
+      gen_random_uuid(), %s, %s, %s, %s, %s, %s::jsonb
+    )
+    """
+    import json
+
+    with get_cursor() as cur:
+        cur.execute(
+            sql,
+            (
+                row["user_id"],
+                row["source_file_id"],
+                row.get("provider_name_raw"),
+                row.get("provider_name_normalized"),
+                row.get("amount"),
+                json.dumps(row["normalized_payload"]),
+            ),
+        )
+
+
+def get_file_record(file_id: str) -> dict | None:
+    sql = """
+    select id, original_name, bucket, storage_path, status
+      from files
+     where id = %s
+    """
+    with get_cursor() as cur:
+        cur.execute(sql, (file_id,))
+        return cur.fetchone()

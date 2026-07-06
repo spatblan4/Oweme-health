@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OweMe Health Project Status</title>
+    <style>
+      :root {
+        --bg: #f4f7fb;
+        --panel: #ffffff;
+        --panel-soft: #f8fbff;
+        --text: #172033;
+        --muted: #667089;
+        --line: #dbe5f0;
+        --navy: #162036;
+        --teal: #117a72;
+        --teal-soft: #def4f1;
+        --amber: #a75d12;
+        --amber-soft: #fff1df;
+        --red: #b04444;
+        --red-soft: #fde8e8;
+        --shadow: 0 20px 50px rgba(19, 33, 58, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family:
+          "SF Pro Display",
+          "SF Pro Text",
+          "Helvetica Neue",
+          Helvetica,
+          Arial,
+          sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(17, 122, 114, 0.08), transparent 28%),
+          radial-gradient(circle at top right, rgba(22, 32, 54, 0.08), transparent 22%),
+          var(--bg);
+        color: var(--text);
+      }
+
+      .page {
+        width: min(1180px, calc(100vw - 40px));
+        margin: 32px auto 56px;
+      }
+
+      .hero {
+        background: linear-gradient(135deg, #15213a 0%, #1d3b55 100%);
+        color: #f8fbff;
+        border-radius: 24px;
+        padding: 28px 28px 24px;
+        box-shadow: var(--shadow);
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #83d7d0;
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-size: clamp(32px, 5vw, 48px);
+        line-height: 1.02;
+      }
+
+      .hero p {
+        margin: 14px 0 0;
+        max-width: 760px;
+        color: rgba(248, 251, 255, 0.82);
+        font-size: 18px;
+        line-height: 1.5;
+      }
+
+      .hero-grid,
+      .grid-3,
+      .grid-2 {
+        display: grid;
+        gap: 18px;
+      }
+
+      .hero-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        margin-top: 24px;
+      }
+
+      .grid-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        margin-top: 20px;
+      }
+
+      .grid-2 {
+        grid-template-columns: 1.15fr 0.85fr;
+        margin-top: 20px;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        box-shadow: var(--shadow);
+      }
+
+      .metric {
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 18px;
+        padding: 18px;
+        min-height: 126px;
+      }
+
+      .metric-label {
+        color: rgba(248, 251, 255, 0.75);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .metric-value {
+        margin-top: 10px;
+        font-size: 42px;
+        font-weight: 800;
+        line-height: 1;
+      }
+
+      .metric-note {
+        margin-top: 10px;
+        color: rgba(248, 251, 255, 0.78);
+        font-size: 14px;
+        line-height: 1.45;
+      }
+
+      .section {
+        padding: 22px;
+      }
+
+      .section h2 {
+        margin: 0 0 6px;
+        font-size: 28px;
+        line-height: 1.05;
+      }
+
+      .section p.lead {
+        margin: 0 0 18px;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.5;
+      }
+
+      .list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .row {
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: var(--panel-soft);
+        border: 1px solid #e5eef7;
+      }
+
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        margin-top: 5px;
+        flex: 0 0 auto;
+      }
+
+      .done {
+        background: var(--teal);
+      }
+
+      .progress {
+        background: var(--amber);
+      }
+
+      .todo {
+        background: #8b97aa;
+      }
+
+      .row strong {
+        display: block;
+        font-size: 16px;
+        line-height: 1.35;
+      }
+
+      .row span {
+        display: block;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.45;
+      }
+
+      .pillbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .pill {
+        padding: 9px 12px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 700;
+        border: 1px solid transparent;
+      }
+
+      .pill.done {
+        background: var(--teal-soft);
+        color: var(--teal);
+        border-color: rgba(17, 122, 114, 0.14);
+      }
+
+      .pill.progress {
+        background: var(--amber-soft);
+        color: var(--amber);
+        border-color: rgba(167, 93, 18, 0.14);
+      }
+
+      .pill.risk {
+        background: var(--red-soft);
+        color: var(--red);
+        border-color: rgba(176, 68, 68, 0.14);
+      }
+
+      .stack {
+        display: grid;
+        gap: 12px;
+      }
+
+      .mini {
+        padding: 16px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: #fff;
+      }
+
+      .mini h3 {
+        margin: 0 0 8px;
+        font-size: 16px;
+      }
+
+      .mini p,
+      .mini ul {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      .mini ul {
+        padding-left: 18px;
+      }
+
+      .footer-note {
+        margin-top: 18px;
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: #eef5ff;
+        color: #40516f;
+        font-size: 14px;
+        line-height: 1.5;
+        border: 1px solid #d8e4f4;
+      }
+
+      @media (max-width: 980px) {
+        .hero-grid,
+        .grid-3,
+        .grid-2 {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .page {
+          width: min(100vw - 24px, 1180px);
+          margin: 12px auto 28px;
+        }
+
+        .hero,
+        .section {
+          padding: 18px;
+        }
+
+        .metric-value {
+          font-size: 34px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">OweMe Health / Project Status</p>
+        <h1>从 prototype 走到可用后端，基础层已经搭起来了。</h1>
+        <p>
+          当前项目已经不再只是静态原型。Supabase、Postgres、Storage、Python worker、
+          Next.js app 的第一版基础链路已经落地，但端到端上传和真实数据回显还没有完全收口。
+        </p>
+
+        <div class="hero-grid">
+          <article class="metric">
+            <div class="metric-label">总体完成度</div>
+            <div class="metric-value">65%</div>
+            <div class="metric-note">基础设施和数据层已成型，产品闭环还没完全打通。</div>
+          </article>
+          <article class="metric">
+            <div class="metric-label">后端基础</div>
+            <div class="metric-value">75%</div>
+            <div class="metric-note">Supabase DB、RLS、Storage bucket、worker 连接都已成功验证。</div>
+          </article>
+          <article class="metric">
+            <div class="metric-label">产品可自用度</div>
+            <div class="metric-value">40%</div>
+            <div class="metric-note">还需要完成真实上传、处理、回显、编辑与稳定性打磨。</div>
+          </article>
+          <article class="metric">
+            <div class="metric-label">当前阶段</div>
+            <div class="metric-value" style="font-size: 24px; line-height: 1.2">Backend Foundation</div>
+            <div class="metric-note">已从“能设计”进入“能落库、能持久化、能处理文件”的阶段。</div>
+          </article>
+        </div>
+      </section>
+
+      <section class="grid-3">
+        <article class="card section">
+          <h2>已完成</h2>
+          <p class="lead">核心平台能力已经从零到一搭好。</p>
+          <div class="list">
+            <div class="row">
+              <div class="dot done"></div>
+              <div>
+                <strong>新项目结构已建立</strong>
+                <span>`apps/web`、`services/worker`、`packages/db` 已分离清楚。</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="dot done"></div>
+              <div>
+                <strong>Supabase 连接已打通</strong>
+                <span>已切换到可用的 pooler 连接串，worker 能真实连上 Postgres。</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="dot done"></div>
+              <div>
+                <strong>数据库 schema 已 apply</strong>
+                <span>`profiles`、`files`、`file_jobs`、`visits`、`claims`、`payments`、`findings`、`manual_adjustments` 已建表。</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="dot done"></div>
+              <div>
+                <strong>RLS 与 storage policy 已就位</strong>
+                <span>业务表 RLS 已启用，`uploads` bucket 也已经创建并加上 policy。</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card section">
+          <h2>进行中</h2>
+          <p class="lead">架构通了，但还在做第一条真实用户链路。</p>
+          <div class="list">
+            <div class="row">
+              <div class="dot progress"></div>
+              <div>
+                <strong>登录与 dashboard 基础</strong>
+                <span>Supabase Auth 基础和 dashboard shell 已在，但仍需更多真实状态联调。</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="dot progress"></div>
+              <div>
+                <strong>文件上传 API</strong>
+                <span>上传初始化、finalize、process 路由已写，但还未完整验收真实上传链路。</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="dot progress"></div>
+              <div>
+                <strong>Python worker 处理链路</strong>
+                <span>任务轮询、下载、抽取、normalize、写回数据库的代码框架已完成。</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card section">
+          <h2>未完成</h2>
+          <p class="lead">这些是让它真正变成可长期使用产品的关键剩余项。</p>
+          <div class="list">
+            <div class="row">
+              <div class="dot todo"></div>
+              <div>
+                <strong>端到端上传验收</strong>
+                <span>真实文件上传到 Storage 后，需要确认 `files` / `file_jobs` / worker 消费全链路稳定。</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="dot todo"></div>
+              <div>
+                <strong>真实 findings 回显</strong>
+                <span>claims、payments、findings 还需要完整进入前端页面和用户交互。</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="dot todo"></div>
+              <div>
+                <strong>产品化打磨</strong>
+                <span>包括错误态、手工修正、长期数据管理、部署环境与隐私保护流程。</span>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="grid-2">
+        <article class="card section">
+          <h2>当前项目状态</h2>
+          <p class="lead">现在已经不是“空壳 prototype”，但也还没到“完全可自用”的程度。</p>
+
+          <div class="pillbar">
+            <span class="pill done">Supabase Connected</span>
+            <span class="pill done">Schema Applied</span>
+            <span class="pill done">RLS Enabled</span>
+            <span class="pill done">Uploads Bucket Ready</span>
+            <span class="pill progress">Upload Flow In Progress</span>
+            <span class="pill progress">Worker E2E Pending</span>
+            <span class="pill risk">UI Data Loop Incomplete</span>
+          </div>
+
+          <div class="footer-note">
+            当前最重要的里程碑已经从“规划技术栈”切换成“打通第一条真实使用链路”。
+            下一步不是继续加更多页面，而是确保一份真实文件可以被上传、入库、处理、再回到界面上。
+          </div>
+        </article>
+
+        <aside class="stack">
+          <section class="card section">
+            <h2 style="font-size: 22px">已验证的事实</h2>
+            <div class="mini">
+              <h3>数据库</h3>
+              <p>Postgres pooler 连接成功，建表成功，RLS 已开启。</p>
+            </div>
+            <div class="mini">
+              <h3>存储</h3>
+              <p>`uploads` bucket 已创建，`storage.objects` policy 已存在。</p>
+            </div>
+            <div class="mini">
+              <h3>代码健康度</h3>
+              <p>worker 测试已通过，最近一次结果为 `14 passed`。</p>
+            </div>
+          </section>
+
+          <section class="card section">
+            <h2 style="font-size: 22px">下一步建议</h2>
+            <div class="mini">
+              <ul>
+                <li>先做一次真实文件上传验收。</li>
+                <li>确认 `files` / `file_jobs` / worker 任务状态正确流转。</li>
+                <li>把 claims / findings 真正显示到 dashboard。</li>
+                <li>再回头做更细的产品 UI 和手工修正体验。</li>
+              </ul>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OweMe Health Prototype</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="home-mode">
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Primary">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">O</div>
+          <div>
+            <p class="brand-name">OweMe Health</p>
+          </div>
+        </div>
+
+        <nav class="nav-list">
+          <button class="nav-item is-active" type="button" data-view="overview">
+            <span class="icon" aria-hidden="true">⌁</span>
+            Home
+          </button>
+          <button class="nav-item" type="button" data-view="past">
+            <span class="icon" aria-hidden="true">$</span>
+            Past Credits
+          </button>
+          <button class="nav-item" type="button" data-view="future">
+            <span class="icon" aria-hidden="true">+</span>
+            Future Visits
+          </button>
+          <button class="nav-item" type="button" data-view="actions">
+            <span class="icon" aria-hidden="true">✓</span>
+            Action Center
+          </button>
+        </nav>
+
+        <div class="privacy-note">
+          <p class="eyebrow">Prototype mode</p>
+          <p>Files stay in this browser session. No login, no bank link, no insurance API.</p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="view is-visible" id="view-overview" aria-labelledby="overview-title">
+          <div class="landing-shell">
+            <header class="landing-nav">
+              <div class="landing-brand">
+                <div class="landing-mark" aria-hidden="true">O</div>
+                <span>OweMe Health</span>
+              </div>
+              <span class="landing-badge">Privacy-first prototype</span>
+            </header>
+
+            <div class="landing-center">
+              <p class="landing-kicker">Medical credits can hide in plain sight</p>
+              <h1 id="overview-title">Who still owes you?</h1>
+              <p class="landing-copy">Medical bills settle weeks after you pay. OweMe helps you find provider credits and remember when to check claims.</p>
+
+              <div class="landing-actions">
+                <button class="primary-button landing-button" type="button" data-jump="past">Check past bills</button>
+                <button class="ghost-button landing-button" type="button" data-jump="future">Track a new visit</button>
+              </div>
+
+              <div class="landing-proof" aria-label="Demo audit result">
+                <span>Demo audit found</span>
+                <strong id="metricCredit">$0.00</strong>
+                <span id="metricCreditHint">across 2 providers</span>
+              </div>
+
+              <p class="landing-privacy">No account. No bank connection. No insurance API.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-past" aria-labelledby="past-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Past Credits</p>
+              <h2 id="past-title">Check old bills</h2>
+              <p>Match what you paid against what insurance says you owe.</p>
+            </div>
+          </div>
+
+          <section class="import-panel" id="importPanel" aria-label="Import claim and payment files">
+            <div class="import-files">
+              <div class="import-file">
+                <span class="file-badge file-badge-claims" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M7 3.75h7.4L19 8.35v11.9H7z" />
+                    <path d="M14 3.75v4.9h5" />
+                    <path d="M9.8 13.2h6.4M9.8 16.2h4.7" />
+                  </svg>
+                </span>
+                <div>
+                  <strong>Claims file</strong>
+                  <small id="claimsFileName">Up to 5 Excel, CSV, or PDF files</small>
+                </div>
+                <label class="file-button" for="claimsFile">Choose files</label>
+                <input class="visually-hidden-file" id="claimsFile" type="file" accept=".csv,.xlsx,.xls,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" multiple />
+                <div class="file-chip-row" id="claimsFileChips" aria-live="polite"></div>
+              </div>
+              <div class="import-file">
+                <span class="file-badge file-badge-payments" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M4 7.5h16v9.75H4z" />
+                    <path d="M4 10.2h16" />
+                    <path d="M7 14.6h4.2" />
+                  </svg>
+                </span>
+                <div>
+                  <strong>Payments file</strong>
+                  <small id="paymentsFileName">Up to 5 Excel, CSV, or PDF files</small>
+                </div>
+                <label class="file-button" for="paymentsFile">Choose files</label>
+                <input class="visually-hidden-file" id="paymentsFile" type="file" accept=".csv,.xlsx,.xls,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" multiple />
+                <div class="file-chip-row" id="paymentsFileChips" aria-live="polite"></div>
+              </div>
+            </div>
+
+            <div class="import-actions">
+              <button class="primary-button" type="button" id="runAuditBtn">Run audit</button>
+              <button class="ghost-button" type="button" id="sampleAuditBtn">Use sample</button>
+              <button class="text-button import-toggle-button" type="button" id="toggleImportBtn">Change files</button>
+              <p class="inline-status" id="uploadStatus">No files selected.</p>
+            </div>
+
+            <div class="manual-entry">
+              <div class="manual-entry-copy">
+                <strong>Manual fallback</strong>
+                <span>Add one row per EOB amount or allocated payment when a PDF needs OCR.</span>
+              </div>
+              <form class="manual-entry-form" id="manualEntryForm">
+                <select name="kind" aria-label="Manual row type">
+                  <option value="payment">Payment / receipt</option>
+                  <option value="claim">EOB / claim</option>
+                </select>
+                <input name="provider" type="text" placeholder="Provider or clinic" required />
+                <input name="date" type="date" required />
+                <input name="amount" type="number" min="0" step="0.01" placeholder="Amount" required />
+                <button class="ghost-button" type="submit">Add row</button>
+              </form>
+              <div class="manual-row-list" id="manualRowList" aria-live="polite"></div>
+            </div>
+          </section>
+
+          <div class="audit-notice-list" id="auditNoticeList" aria-live="polite"></div>
+
+          <section class="audit-summary is-hidden" id="auditSummary" aria-live="polite">
+            <div>
+              <p class="eyebrow">Audit result</p>
+              <h3><span id="auditTotalCredit">$0.00</span> possible credits found</h3>
+              <p id="auditSummaryMeta">Run an audit to see possible provider credits.</p>
+            </div>
+            <button class="summary-action" type="button" data-jump="actions">Review next steps</button>
+          </section>
+
+          <div class="audit-results-layout is-hidden" id="auditResultsLayout">
+            <section class="data-section" aria-labelledby="results-title">
+              <div class="section-heading compact">
+                <div>
+                  <h2 id="results-title">Audit findings</h2>
+                </div>
+              </div>
+              <div class="audit-scope-bar" id="auditScopeBar"></div>
+              <div class="provider-credit-list" id="providerCreditList"></div>
+            </section>
+
+            <aside class="detail-panel" aria-labelledby="detail-title">
+              <p class="eyebrow">Selected provider</p>
+              <h2 id="detail-title">Finding timeline</h2>
+              <div id="visitDetail"></div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="view-future" aria-labelledby="future-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Future Visits</p>
+              <h2 id="future-title">Log a visit before it disappears</h2>
+              <p>Record what you paid today. OweMe creates a claim-check date and later compares the EOB.</p>
+            </div>
+          </div>
+
+          <div class="future-layout">
+            <form class="visit-form" id="visitForm">
+              <div class="form-row single">
+                <div class="provider-field">
+                  <label for="providerInput">Provider or clinic</label>
+                  <input id="providerInput" name="provider" type="text" placeholder="Stone Creek Village Dentistry" autocomplete="off" aria-autocomplete="list" aria-controls="providerSuggestions" required />
+                  <input id="providerAddressInput" name="providerAddress" type="hidden" />
+                  <div class="provider-suggestions" id="providerSuggestions" role="listbox" aria-label="Provider suggestions"></div>
+                </div>
+              </div>
+
+              <div class="form-row two">
+                <label>
+                  Date of visit
+                  <input name="date" type="date" required />
+                </label>
+                <label>
+                  Paid today
+                  <input name="paid" type="number" min="0" step="0.01" placeholder="275.00" required />
+                </label>
+              </div>
+
+              <div class="form-row single">
+                <label>
+                  Paid with
+                  <select name="paymentMethod" id="visitPaymentMethod">
+                    <option>Personal card</option>
+                    <option>HSA</option>
+                    <option>FSA</option>
+                    <option>Apple Card</option>
+                    <option>Debit card</option>
+                    <option>Cash / check</option>
+                    <option>Other card</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="form-row single compact-row reimbursement-row" id="reimbursementRow">
+                <label class="checkbox-field compact-checkbox">
+                  <input name="needsReimbursement" type="checkbox" />
+                  <span>
+                    <strong>Need HSA/FSA reimbursement</strong>
+                    <small>Only if this was paid from a personal account</small>
+                  </span>
+                </label>
+              </div>
+
+              <details class="visit-details" id="visitDetails">
+                <summary>
+                  <span>More details</span>
+                  <small>Insurance, visit type, notes</small>
+                </summary>
+
+                <div class="details-body">
+                  <div class="form-row two">
+                    <label>
+                      Visit type
+                      <select name="type">
+                        <option>Dental</option>
+                        <option>Medical</option>
+                        <option>Vision</option>
+                        <option>Pharmacy</option>
+                      </select>
+                    </label>
+                    <div class="insurance-field">
+                      <label for="insurancePreset">Insurance</label>
+                      <select id="insurancePreset" name="insurancePreset">
+                        <option value="">Select insurance</option>
+                        <optgroup label="Dental">
+                          <option>GEHA Dental</option>
+                          <option>Delta Dental</option>
+                          <option>MetLife Dental</option>
+                          <option>Cigna Dental</option>
+                          <option>Aetna Dental</option>
+                          <option>Guardian Dental</option>
+                          <option>UnitedHealthcare Dental</option>
+                          <option>Humana Dental</option>
+                          <option>United Concordia</option>
+                        </optgroup>
+                        <optgroup label="Medical">
+                          <option>GEHA Medical</option>
+                          <option>Aetna</option>
+                          <option>Blue Cross Blue Shield</option>
+                          <option>Anthem</option>
+                          <option>Cigna</option>
+                          <option>UnitedHealthcare</option>
+                          <option>Kaiser Permanente</option>
+                          <option>Humana</option>
+                        </optgroup>
+                        <option value="__custom__">Other / custom</option>
+                      </select>
+                      <input class="insurance-custom-input is-hidden" id="insuranceCustomInput" name="insuranceCustom" type="text" placeholder="Type insurance name" />
+                    </div>
+                  </div>
+
+                  <div class="form-row two">
+                    <label>
+                      Claim usually ready in
+                      <select name="weeks">
+                        <option value="2">2 weeks</option>
+                        <option value="3" selected>3 weeks</option>
+                        <option value="4">4 weeks</option>
+                        <option value="6">6 weeks</option>
+                      </select>
+                    </label>
+                    <label>
+                      Visit status
+                      <select name="auditFlag">
+                        <option value="none" selected>Attended / expected</option>
+                        <option value="canceled">I canceled this</option>
+                        <option value="unrecognized">I do not recognize this</option>
+                        <option value="allocation_unclear">Payment allocation unclear</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div class="form-row single">
+                    <label>
+                      Next appointment
+                      <input name="nextAppointmentDate" type="date" />
+                    </label>
+                  </div>
+
+                  <div class="form-row single">
+                    <label>
+                      Notes
+                      <textarea name="notes" rows="2" placeholder="Reason, cancellation, symptoms, or anything to remember"></textarea>
+                    </label>
+                  </div>
+                </div>
+              </details>
+
+              <button class="primary-button full" type="submit">Add visit tracker</button>
+            </form>
+
+            <section class="data-section" aria-labelledby="visit-list-title">
+              <div class="section-heading compact">
+                <div>
+                  <h2 id="visit-list-title">Tracked visits</h2>
+                  <p>Enter the EOB amount when the claim is ready.</p>
+                </div>
+                <div class="visit-storage-tools" aria-label="Visit backup tools">
+                  <span id="visitStorageStatus">Saved locally</span>
+                  <button class="ghost-button small" type="button" id="exportVisitsBtn">Export backup</button>
+                  <label class="ghost-button small import-backup-button" for="importVisitsFile">Import backup</label>
+                  <input class="visually-hidden-file" id="importVisitsFile" type="file" accept="application/json,.json" />
+                </div>
+              </div>
+              <div class="visit-filter-tabs" role="tablist" aria-label="Tracked visit type">
+                <button class="is-active" type="button" role="tab" aria-selected="true" data-visit-filter="all">All <span id="visitCountAll">0</span></button>
+                <button type="button" role="tab" aria-selected="false" data-visit-filter="dental">Dental <span id="visitCountDental">0</span></button>
+                <button type="button" role="tab" aria-selected="false" data-visit-filter="medical">Medical <span id="visitCountMedical">0</span></button>
+              </div>
+              <div class="visit-list" id="futureVisitList"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="view-actions" aria-labelledby="actions-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Action Center</p>
+              <h2 id="actions-title">Contact providers</h2>
+              <p>Ask for an itemized ledger first, then confirm refund, credit, allocation, or charge correction.</p>
+            </div>
+          </div>
+
+          <div class="actions-layout">
+            <section class="data-section" aria-labelledby="action-list-title">
+              <div class="section-heading compact">
+                <div>
+                  <h2 id="action-list-title">Providers to contact</h2>
+                </div>
+              </div>
+              <div id="actionList" class="action-list"></div>
+            </section>
+
+            <aside class="script-panel">
+              <p class="eyebrow">Ledger request</p>
+              <h2 id="scriptTitle">Request account ledger</h2>
+              <p class="script-hint">Call first for speed. Ask them to send the ledger and any correction in writing.</p>
+              <div class="provider-contact" id="providerContact" hidden>
+                <div>
+                  <span>Phone</span>
+                  <a id="providerPhoneLink" href="tel:"></a>
+                  <small id="providerContactNote"></small>
+                </div>
+                <button class="ghost-button" type="button" id="copyPhoneBtn">Copy</button>
+              </div>
+              <div class="script-mode" aria-label="Contact method">
+                <button class="is-active" type="button" data-script-mode="call">Call</button>
+                <button type="button" data-script-mode="email">Email</button>
+              </div>
+              <textarea id="scriptText" rows="11" readonly></textarea>
+              <button class="ghost-button full" type="button" id="copyScriptBtn">Copy script</button>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="./vendor/xlsx.full.min.js"></script>
+    <script src="./vendor/pdf.legacy.min.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
