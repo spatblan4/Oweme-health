@@ -121,10 +121,11 @@ def insert_claim_row(row: dict):
     sql = """
     insert into claims (
       id, user_id, source_file_id, provider_name_raw, provider_name_normalized,
+      facility_name, facility_name_normalized,
       service_date, patient_responsibility, insurance_paid, billed_amount, allowed_amount,
       status, normalized_payload
     ) values (
-      gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb
+      gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb
     )
     """
     import json
@@ -137,6 +138,8 @@ def insert_claim_row(row: dict):
                 row["source_file_id"],
                 row.get("provider_name_raw"),
                 row.get("provider_name_normalized"),
+                row.get("facility_name"),
+                row.get("facility_name_normalized"),
                 row.get("service_date"),
                 row.get("patient_responsibility"),
                 row.get("insurance_paid"),
@@ -189,7 +192,9 @@ def delete_payment_rows_for_file(file_id: str):
 
 def list_claim_rows(user_id: str, source_file_ids: list[str] | None = None) -> list[dict]:
     sql = """
-    select id, provider_name_raw, provider_name_normalized, service_date, patient_responsibility, status
+    select id, provider_name_raw, provider_name_normalized,
+           facility_name, facility_name_normalized,
+           service_date, patient_responsibility, status
       from claims
      where user_id = %s
     """

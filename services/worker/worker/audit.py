@@ -83,7 +83,7 @@ def _likely_provider_payment(payment: dict, grouped_claims: dict[tuple[str, str]
     )
     text = provider_name.lower()
     if re.search(
-        r"\b(dental|dentist|dds|dmd|medical|clinic|hospital|health|care|orthodont|vision|doctor|physician|surgery|dermatology|radiology|laboratory|labcorp|quest)\b",
+        r"\b(dental|dentist|dds|dmd|medical|clinic|hospital|health|care|orthodont|orthodontics|vision|optometr|doctor|physician|surgery|dermatology|radiology|imaging|laboratory|labcorp|quest|obgyn|obstetric|gynecolog|pediatric|pharmac|urgent)\b",
         text,
     ):
         return True
@@ -114,18 +114,28 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
         provider_key = str(
             claim.get("provider_name_normalized") or provider_name.lower()
         ).strip()
+        facility_name = str(
+            claim.get("facility_name")
+            or claim.get("facility_name_normalized")
+            or ""
+        ).strip()
         service_date = str(claim.get("service_date") or "")
-        key = (provider_key, service_date)
+        facility_key = str(
+            claim.get("facility_name_normalized") or facility_name.lower() or ""
+        ).strip()
+        key = (provider_key, facility_key, service_date)
 
         if key not in grouped_claims:
             grouped_claims[key] = {
                 "provider_name": provider_name,
                 "provider_key": provider_key,
+                "facility_name": facility_name,
                 "service_date": service_date,
                 "responsibility": Decimal("0.00"),
                 "claim_ids": [],
                 "statuses": [],
                 "matched_payments": [],
+                "matched_via": "provider",
             }
 
         group = grouped_claims[key]
@@ -145,11 +155,19 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
     for payment_id, payment in payments_by_id.items():
         best_key: tuple[str, str] | None = None
         best_score = 0.0
+        best_via = "provider"
 
         for key, group in grouped_claims.items():
-            name_score = provider_match_score(
+            provider_score = provider_match_score(
                 group["provider_name"], payment.get("provider_name_raw")
             )
+            facility_score = (
+                provider_match_score(group["facility_name"], payment.get("provider_name_raw"))
+                if group["facility_name"]
+                else 0.0
+            )
+            name_score = max(provider_score, facility_score)
+            via = "facility" if facility_score > provider_score and facility_score > 0 else "provider"
             day_gap = _days_between(group["service_date"], payment.get("payment_date"))
             if day_gap is None or day_gap < 0 or day_gap > 60 or name_score <= 0.25:
                 continue
@@ -159,9 +177,11 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
             if total_score > best_score:
                 best_score = total_score
                 best_key = key
+                best_via = via
 
         if best_key is not None:
             grouped_claims[best_key]["matched_payments"].append(payment)
+            grouped_claims[best_key]["matched_via"] = best_via
             matched_payment_ids.add(payment_id)
 
     findings: list[dict] = []
@@ -173,6 +193,9 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
         responsibility = group["responsibility"]
         credit_amount = paid_amount - responsibility
         provider_name = group["provider_name"]
+        facility_name = group["facility_name"]
+        matched_via = group.get("matched_via", "provider")
+        display_name = facility_name if matched_via == "facility" and facility_name else provider_name
         service_date = group["service_date"] or "date not recorded"
 
         if credit_amount > Decimal("0.00"):
@@ -181,14 +204,16 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
                     "finding_type": "possible_credit",
                     "severity": "attention",
                     "status": "open",
-                    "title": provider_name,
+                    "title": display_name,
                     "summary": f"Paid {_money_text(paid_amount)} for {service_date}, but the claim says you owe {_money_text(responsibility)}.",
                     "details": {
-                        "provider_name": provider_name,
+                        "provider_name": display_name,
+                        "facility_name": facility_name,
                         "service_date": service_date,
                         "paid_amount": _money_text(paid_amount),
                         "responsibility_amount": _money_text(responsibility),
                         "credit_amount": _money_text(credit_amount),
+                        "matched_via": matched_via,
                         "claim_ids": group["claim_ids"],
                     },
                 }
@@ -201,10 +226,11 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
                     "finding_type": "allocation_unclear",
                     "severity": "attention",
                     "status": "open",
-                    "title": provider_name,
+                    "title": display_name,
                     "summary": f"Claim from {service_date} shows {_money_text(responsibility)} patient responsibility, but no matching payment was found yet.",
                     "details": {
-                        "provider_name": provider_name,
+                        "provider_name": display_name,
+                        "facility_name": facility_name,
                         "service_date": service_date,
                         "responsibility_amount": _money_text(responsibility),
                         "claim_ids": group["claim_ids"],
@@ -225,10 +251,11 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
                     "finding_type": "claim_in_process",
                     "severity": "info",
                     "status": "open",
-                    "title": provider_name,
+                    "title": display_name,
                     "summary": f"Claim from {service_date} still looks in process.",
                     "details": {
-                        "provider_name": provider_name,
+                        "provider_name": display_name,
+                        "facility_name": facility_name,
                         "service_date": service_date,
                         "responsibility_amount": _money_text(responsibility),
                         "claim_ids": group["claim_ids"],

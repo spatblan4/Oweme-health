@@ -9,7 +9,7 @@ import tempfile
 
 DEFAULT_PDF_TO_TXT_SCRIPT = os.environ.get(
     "OWEME_PDF_TO_TXT_SCRIPT",
-    "/Users/chongchongchao/dev/project/temp/pdf_to_txt.py",
+    str(Path(__file__).resolve().parents[4] / "tools" / "pdf_to_txt.py"),
 )
 
 

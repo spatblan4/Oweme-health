@@ -3,10 +3,15 @@
 import Link from "next/link";
 import React, { useMemo, useState } from "react";
 
+import { buildActionDraft } from "@/lib/findings/draft-action";
+import { normalizeProviderName } from "@/lib/providers/normalize";
+import { buildVisitPayload } from "@/lib/visits/build-visit-payload";
+
 type DashboardShellProps = {
   jobs: Array<Record<string, unknown>>;
   visits: Array<Record<string, unknown>>;
   findings: Array<Record<string, unknown>>;
+  providers?: Array<Record<string, unknown>>;
   initialView?: ViewKey;
 };
 
@@ -107,6 +112,27 @@ function pill(label: string, tone: "teal" | "amber" | "slate" = "slate") {
   );
 }
 
+function actionButton(label: string, onClick: () => void) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        borderRadius: 999,
+        border: "1px solid #dbe4ef",
+        background: "#ffffff",
+        color: "#152235",
+        padding: "8px 14px",
+        fontSize: 13,
+        fontWeight: 700,
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
 function surface(children: React.ReactNode, extra?: React.CSSProperties) {
   return (
     <section
@@ -147,14 +173,12 @@ type LocalUpload = {
   error?: string;
 };
 
-const ACCEPTED_UPLOAD_EXTENSIONS = [".csv", ".pdf", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"];
+const ACCEPTED_UPLOAD_EXTENSIONS = [".csv", ".pdf", ".xls", ".xlsx"];
 const ACCEPTED_UPLOAD_MIME_TYPES = [
   "text/csv",
   "application/pdf",
   "application/vnd.ms-excel",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "image/png",
-  "image/jpeg",
 ];
 const ACCEPTED_UPLOAD_ATTR = ACCEPTED_UPLOAD_EXTENSIONS.join(",");
 const MAX_FILES_PER_UPLOAD = 5;
@@ -305,6 +329,7 @@ export function DashboardShell({
   jobs,
   visits,
   findings,
+  providers = [],
   initialView = "overview",
 }: DashboardShellProps) {
   const activeView = initialView;
@@ -314,6 +339,11 @@ export function DashboardShell({
   });
   const [pastAuditStatus, setPastAuditStatus] = useState<string>("");
   const [isRunningAudit, setIsRunningAudit] = useState(false);
+  const [futureVisitStatus, setFutureVisitStatus] = useState<string>("");
+  const [isSavingVisit, setIsSavingVisit] = useState(false);
+  const [actionStatus, setActionStatus] = useState<string>("");
+  const [actionFindingId, setActionFindingId] = useState<string | null>(null);
+  const [actionContact, setActionContact] = useState({ phone: "", email: "" });
   const [futureVisitDraft, setFutureVisitDraft] = useState({
     provider: "Stone Creek Village Dentistry",
     visitType: "Dental",
@@ -419,7 +449,7 @@ export function DashboardShell({
 
     const supportedFiles = Array.from(files).filter(isSupportedUpload).slice(0, MAX_FILES_PER_UPLOAD);
     if (!supportedFiles.length) {
-      setPastAuditStatus("Unsupported file type. Use CSV, PDF, XLS, XLSX, PNG, or JPG.");
+      setPastAuditStatus("Unsupported file type. Use CSV, PDF, XLS, or XLSX.");
       return;
     }
     if (files.length > MAX_FILES_PER_UPLOAD) {
@@ -498,6 +528,281 @@ export function DashboardShell({
     } finally {
       setIsRunningAudit(false);
     }
+  }
+
+  async function handleAddVisit() {
+    if (!futureVisitDraft.provider.trim() || !futureVisitDraft.visitDate) {
+      setFutureVisitStatus("Provider and visit date are required.");
+      return;
+    }
+
+    setIsSavingVisit(true);
+    setFutureVisitStatus("Saving visit...");
+
+    try {
+      const response = await fetch("/api/visits", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(buildVisitPayload(futureVisitDraft)),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to save visit.");
+      }
+
+      setFutureVisitStatus("Visit saved.");
+      window.location.reload();
+    } catch (error) {
+      setFutureVisitStatus(error instanceof Error ? error.message : "Failed to save visit.");
+    } finally {
+      setIsSavingVisit(false);
+    }
+  }
+
+  async function handleUpdateFinding(
+    findingId: string,
+    status: "open" | "resolved" | "dismissed",
+  ) {
+    setActionStatus("");
+    try {
+      const response = await fetch(`/api/findings/${findingId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to update finding.");
+      }
+
+      window.location.reload();
+    } catch (error) {
+      setActionStatus(error instanceof Error ? error.message : "Failed to update finding.");
+    }
+  }
+
+  function findingProviderName(finding: Record<string, unknown>): string {
+    const details = (finding.details ?? {}) as Record<string, unknown>;
+    return String(finding.title ?? details.provider_name ?? "");
+  }
+
+  function matchedProviderFor(
+    finding: Record<string, unknown>,
+  ): Record<string, unknown> | undefined {
+    const name = findingProviderName(finding);
+    if (!name) {
+      return undefined;
+    }
+    const normalized = normalizeProviderName(name);
+    return providers.find((provider) => provider.name_normalized === normalized);
+  }
+
+  function openTakeAction(finding: Record<string, unknown>) {
+    const matched = matchedProviderFor(finding);
+    setActionFindingId(String(finding.id));
+    setActionContact({
+      phone: String(matched?.phone ?? ""),
+      email: String(matched?.email ?? ""),
+    });
+    setActionStatus("");
+  }
+
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setActionStatus("Copied to clipboard.");
+    } catch {
+      setActionStatus("Could not copy automatically. Select and copy manually.");
+    }
+  }
+
+  async function saveProviderContact(finding: Record<string, unknown>) {
+    const name = findingProviderName(finding);
+    if (!name) {
+      setActionStatus("No provider name available to save.");
+      return;
+    }
+    setActionStatus("Saving contact...");
+    try {
+      const response = await fetch("/api/providers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          phone: actionContact.phone || undefined,
+          email: actionContact.email || undefined,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to save contact.");
+      }
+
+      setActionStatus("Contact saved.");
+      window.location.reload();
+    } catch (error) {
+      setActionStatus(error instanceof Error ? error.message : "Failed to save contact.");
+    }
+  }
+
+  function takeActionPanel(finding: Record<string, unknown>) {
+    if (actionFindingId !== String(finding.id)) {
+      return null;
+    }
+
+    const draft = buildActionDraft(finding, {
+      phone: actionContact.phone,
+      email: actionContact.email,
+    });
+    const mailtoHref = `mailto:${encodeURIComponent(actionContact.email)}?subject=${encodeURIComponent(
+      draft.emailSubject,
+    )}&body=${encodeURIComponent(draft.emailBody)}`;
+    const telHref = actionContact.phone
+      ? `tel:${actionContact.phone.replace(/[^0-9+]/g, "")}`
+      : "";
+
+    return (
+      <div
+        style={{
+          display: "grid",
+          gap: 12,
+          marginTop: 6,
+          padding: 16,
+          border: "1px solid #e3ebf4",
+          borderRadius: 16,
+          background: "#fbfdff",
+        }}
+      >
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <label style={{ display: "grid", gap: 6 }}>
+            {futureFieldLabel("Provider phone")}
+            <input
+              value={actionContact.phone}
+              onChange={(event) =>
+                setActionContact((current) => ({ ...current, phone: event.target.value }))
+              }
+              placeholder="555-0100"
+              style={{
+                height: 44,
+                borderRadius: 12,
+                border: "1px solid #dbe4ef",
+                background: "#ffffff",
+                padding: "0 12px",
+                fontSize: 15,
+              }}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            {futureFieldLabel("Provider email")}
+            <input
+              value={actionContact.email}
+              onChange={(event) =>
+                setActionContact((current) => ({ ...current, email: event.target.value }))
+              }
+              placeholder="billing@provider.com"
+              style={{
+                height: 44,
+                borderRadius: 12,
+                border: "1px solid #dbe4ef",
+                background: "#ffffff",
+                padding: "0 12px",
+                fontSize: 15,
+              }}
+            />
+          </label>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          {actionButton("Save contact", () => saveProviderContact(finding))}
+          {telHref ? (
+            <a
+              href={telHref}
+              style={{
+                borderRadius: 999,
+                border: "1px solid #dbe4ef",
+                background: "#ffffff",
+                color: "#152235",
+                padding: "8px 14px",
+                fontSize: 13,
+                fontWeight: 700,
+                textDecoration: "none",
+              }}
+            >
+              Call now
+            </a>
+          ) : null}
+          <a
+            href={mailtoHref}
+            style={{
+              borderRadius: 999,
+              border: "1px solid #dbe4ef",
+              background: "#ffffff",
+              color: "#152235",
+              padding: "8px 14px",
+              fontSize: 13,
+              fontWeight: 700,
+              textDecoration: "none",
+            }}
+          >
+            Open in email
+          </a>
+        </div>
+
+        <div style={{ display: "grid", gap: 6 }}>
+          <strong style={{ fontSize: 14 }}>Email draft</strong>
+          <pre
+            style={{
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontSize: 13,
+              color: "#314255",
+              background: "#ffffff",
+              border: "1px solid #e3ebf4",
+              borderRadius: 12,
+              padding: 12,
+            }}
+          >
+            {draft.emailSubject}
+            {"\n\n"}
+            {draft.emailBody}
+          </pre>
+          {actionButton("Copy email", () =>
+            copyText(`${draft.emailSubject}\n\n${draft.emailBody}`),
+          )}
+        </div>
+
+        <div style={{ display: "grid", gap: 6 }}>
+          <strong style={{ fontSize: 14 }}>Phone script</strong>
+          <pre
+            style={{
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontSize: 13,
+              color: "#314255",
+              background: "#ffffff",
+              border: "1px solid #e3ebf4",
+              borderRadius: 12,
+              padding: 12,
+            }}
+          >
+            {draft.phoneScript}
+          </pre>
+          {actionButton("Copy script", () => copyText(draft.phoneScript))}
+        </div>
+      </div>
+    );
   }
 
   if (activeView === "overview") {
@@ -1706,6 +2011,8 @@ export function DashboardShell({
 
                   <button
                     type="button"
+                    disabled={isSavingVisit}
+                    onClick={handleAddVisit}
                     style={{
                       borderRadius: 14,
                       border: "none",
@@ -1714,13 +2021,16 @@ export function DashboardShell({
                       padding: "13px 18px",
                       fontWeight: 700,
                       fontSize: 15,
-                      cursor: "pointer",
+                      cursor: isSavingVisit ? "wait" : "pointer",
                       justifySelf: "start",
                       minWidth: 180,
                     }}
                   >
-                    Add visit tracker
+                    {isSavingVisit ? "Saving..." : "Add visit tracker"}
                   </button>
+                  {futureVisitStatus ? (
+                    <span style={{ color: "#617086", fontSize: 14 }}>{futureVisitStatus}</span>
+                  ) : null}
                 </div>,
               )}
 
@@ -1778,6 +2088,12 @@ export function DashboardShell({
                   "Keep unresolved billing questions, credits to verify, and follow-up tasks in one queue.",
                 )}
 
+                {actionStatus ? (
+                  <span style={{ color: "#b54708", fontSize: 14, fontWeight: 600 }}>
+                    {actionStatus}
+                  </span>
+                ) : null}
+
                 <div style={{ display: "grid", gap: 14 }}>
                   {reviewItems.length ? (
                     reviewItems.map((finding) => (
@@ -1804,10 +2120,26 @@ export function DashboardShell({
                               "Check whether this item needs a refund request, clarification call, or manual correction.",
                           )}
                         </span>
-                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                          {pill("Open", "slate")}
-                          {pill("Needs review", "amber")}
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                          {pill(
+                            String(finding.status ?? "open").replace(/_/g, " "),
+                            String(finding.status ?? "open") === "dismissed" ? "slate" : "amber",
+                          )}
+                          {String(finding.status ?? "open") !== "resolved"
+                            ? actionButton("Mark resolved", () =>
+                                handleUpdateFinding(String(finding.id), "resolved"),
+                              )
+                            : null}
+                          {String(finding.status ?? "open") === "dismissed"
+                            ? actionButton("Reopen", () =>
+                                handleUpdateFinding(String(finding.id), "open"),
+                              )
+                            : actionButton("Dismiss", () =>
+                                handleUpdateFinding(String(finding.id), "dismissed"),
+                              )}
+                          {actionButton("Take action", () => openTakeAction(finding))}
                         </div>
+                        {takeActionPanel(finding)}
                       </div>
                     ))
                   ) : (

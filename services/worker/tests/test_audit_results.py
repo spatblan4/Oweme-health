@@ -73,3 +73,37 @@ def test_build_findings_ignores_non_medical_unmatched_payments():
     )
 
     assert findings == []
+
+
+def test_build_findings_matches_payment_to_facility_when_provider_is_a_doctor():
+    findings = build_findings(
+        claims=[
+            {
+                "id": "claim-1",
+                "provider_name_raw": "Leibovsky, Vladimir",
+                "provider_name_normalized": "leibovsky vladimir",
+                "facility_name": "LAiMA OBGYN INC",
+                "facility_name_normalized": "laima obgyn inc",
+                "service_date": "2026-06-25",
+                "patient_responsibility": "61.29",
+                "status": "processed",
+            }
+        ],
+        payments=[
+            {
+                "id": "payment-1",
+                "provider_name_raw": "LAiMA OBGYN INC",
+                "provider_name_normalized": "laima obgyn inc",
+                "payment_date": "2026-06-25",
+                "amount": "100.00",
+            }
+        ],
+    )
+
+    assert len(findings) == 1
+    assert findings[0]["finding_type"] == "possible_credit"
+    assert findings[0]["details"]["credit_amount"] == "38.71"
+    assert findings[0]["details"]["matched_via"] == "facility"
+    assert findings[0]["title"] == "LAiMA OBGYN INC"
+    assert findings[0]["details"]["provider_name"] == "LAiMA OBGYN INC"
+    assert findings[0]["details"]["facility_name"] == "LAiMA OBGYN INC"

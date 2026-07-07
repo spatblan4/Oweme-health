@@ -40,3 +40,19 @@ def test_normalize_claim_rows_accepts_service_begin_date_headers():
 
     assert normalized[0]["provider_name_raw"] == "JAMES KIM"
     assert normalized[0]["service_date"] == "2026-05-13"
+
+
+def test_normalize_claim_rows_captures_facility_separately_from_provider():
+    rows = [
+        {
+            "provider": "Leibovsky, Vladimir",
+            "facility": "LAiMA OBGYN INC",
+            "service_date": "2026-06-25",
+        }
+    ]
+
+    normalized = normalize_claim_rows(rows)
+
+    assert normalized[0]["provider_name_raw"] == "Leibovsky, Vladimir"
+    assert normalized[0]["facility_name"] == "LAiMA OBGYN INC"
+    assert normalized[0]["facility_name_normalized"] == "laima obgyn inc"

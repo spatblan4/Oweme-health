@@ -27,10 +27,23 @@ def normalize_claim_rows(rows: list[dict]) -> list[dict]:
                 "merchant",
             ],
         )
+        facility_raw = _pick(
+            row,
+            [
+                "facility",
+                "facility name",
+                "facility_name",
+                "clinic",
+                "location",
+                "servicing facility",
+            ],
+        )
         normalized.append(
             {
                 "provider_name_raw": provider_raw,
                 "provider_name_normalized": normalize_provider_name(provider_raw),
+                "facility_name": facility_raw,
+                "facility_name_normalized": normalize_provider_name(facility_raw),
                 "service_date": normalize_iso_date(
                     _pick(
                         row,

@@ -52,7 +52,7 @@ describe("DashboardShell", () => {
     expect(html).not.toContain("Privacy-first prototype");
     expect(html).toContain('id="claims-file-input"');
     expect(html).toContain('type="file"');
-    expect(html).toContain('accept=".csv,.pdf,.xls,.xlsx,.png,.jpg,.jpeg"');
+    expect(html).toContain('accept=".csv,.pdf,.xls,.xlsx"');
     expect(html).toContain('for="claims-file-input"');
     expect(html).toContain('for="payments-file-input"');
     expect(html).not.toContain("file jobs ready");

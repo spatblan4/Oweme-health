@@ -12,6 +12,7 @@ const emptyDashboardData = {
   jobs: [],
   visits: [],
   findings: [],
+  providers: [],
 } as DashboardData;
 
 export default async function DashboardPage({
@@ -25,7 +26,15 @@ export default async function DashboardPage({
   const initialView = normalizeDashboardView(params?.view);
 
   if (!userId) {
-    return <DashboardShell jobs={[]} visits={[]} findings={[]} initialView={initialView} />;
+    return (
+      <DashboardShell
+        jobs={[]}
+        visits={[]}
+        findings={[]}
+        providers={[]}
+        initialView={initialView}
+      />
+    );
   }
 
   let data: DashboardData = emptyDashboardData;
@@ -39,6 +48,7 @@ export default async function DashboardPage({
       jobs={data.jobs}
       visits={data.visits}
       findings={data.findings}
+      providers={data.providers}
       initialView={initialView}
     />
   );
