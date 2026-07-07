@@ -9,8 +9,13 @@ export function getPublicSupabaseEnv() {
     anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   };
 
-  for (const key of requiredEnv) {
-    if (!process.env[key]) {
+  const checks = [
+    ["NEXT_PUBLIC_SUPABASE_URL", values.url],
+    ["NEXT_PUBLIC_SUPABASE_ANON_KEY", values.anonKey],
+  ] as const;
+
+  for (const [key, value] of checks) {
+    if (!value) {
       throw new Error(`Missing required environment variable: ${key}`);
     }
   }
@@ -25,4 +30,3 @@ export function getServiceRoleKey() {
   }
   return value;
 }
-

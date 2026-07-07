@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from "@/lib/auth/server";
+import { createAdminSupabaseClient } from "@/lib/auth/admin";
 
 type JobRowInsert = {
   id: string;
@@ -18,7 +18,7 @@ type OwnedJobRow = {
 };
 
 export async function insertJobRow(job: JobRowInsert) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const { error } = await supabase.from("file_jobs").insert(job);
   if (error) {
     throw new Error(`Failed to insert job row: ${error.message}`);
@@ -29,7 +29,7 @@ export async function getOwnedJobRow(
   userId: string,
   jobId: string,
 ): Promise<OwnedJobRow | null> {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("file_jobs")
     .select("id,status,job_type,file_id")

@@ -12,5 +12,11 @@ describe("LoginForm", () => {
     expect(html).toContain("name=\"email\"");
     expect(html).toContain("Send magic link");
   });
-});
 
+  it("renders a development test account button when enabled", () => {
+    const html = renderToStaticMarkup(<LoginForm showDevLogin />);
+
+    expect(html).toContain("Use dev test account");
+    expect(html).toContain("/api/dev/login");
+  });
+});

@@ -16,6 +16,12 @@ describe("resolveAppAccess", () => {
     });
   });
 
+  it("allows anonymous users to reach the auth callback route", () => {
+    expect(resolveAppAccess(null, "/auth/callback")).toEqual({
+      action: "allow",
+    });
+  });
+
   it("redirects authenticated users away from the login page", () => {
     expect(resolveAppAccess("user-1", "/login")).toEqual({
       action: "redirect",

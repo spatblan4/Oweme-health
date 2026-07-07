@@ -121,9 +121,10 @@ def insert_claim_row(row: dict):
     sql = """
     insert into claims (
       id, user_id, source_file_id, provider_name_raw, provider_name_normalized,
-      service_date, normalized_payload
+      service_date, patient_responsibility, insurance_paid, billed_amount, allowed_amount,
+      status, normalized_payload
     ) values (
-      gen_random_uuid(), %s, %s, %s, %s, %s, %s::jsonb
+      gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb
     )
     """
     import json
@@ -137,6 +138,11 @@ def insert_claim_row(row: dict):
                 row.get("provider_name_raw"),
                 row.get("provider_name_normalized"),
                 row.get("service_date"),
+                row.get("patient_responsibility"),
+                row.get("insurance_paid"),
+                row.get("billed_amount"),
+                row.get("allowed_amount"),
+                row.get("status"),
                 json.dumps(row["normalized_payload"]),
             ),
         )
@@ -146,9 +152,9 @@ def insert_payment_row(row: dict):
     sql = """
     insert into payments (
       id, user_id, source_file_id, provider_name_raw, provider_name_normalized,
-      amount, normalized_payload
+      payment_date, amount, payment_source, normalized_payload
     ) values (
-      gen_random_uuid(), %s, %s, %s, %s, %s, %s::jsonb
+      gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s::jsonb
     )
     """
     import json
@@ -161,10 +167,85 @@ def insert_payment_row(row: dict):
                 row["source_file_id"],
                 row.get("provider_name_raw"),
                 row.get("provider_name_normalized"),
+                row.get("payment_date"),
                 row.get("amount"),
+                row.get("payment_source"),
                 json.dumps(row["normalized_payload"]),
             ),
         )
+
+
+def delete_claim_rows_for_file(file_id: str):
+    sql = "delete from claims where source_file_id = %s"
+    with get_cursor() as cur:
+        cur.execute(sql, (file_id,))
+
+
+def delete_payment_rows_for_file(file_id: str):
+    sql = "delete from payments where source_file_id = %s"
+    with get_cursor() as cur:
+        cur.execute(sql, (file_id,))
+
+
+def list_claim_rows(user_id: str, source_file_ids: list[str] | None = None) -> list[dict]:
+    sql = """
+    select id, provider_name_raw, provider_name_normalized, service_date, patient_responsibility, status
+      from claims
+     where user_id = %s
+    """
+    params: list = [user_id]
+    if source_file_ids:
+        sql += " and source_file_id = any(%s)"
+        params.append(source_file_ids)
+    sql += " order by service_date asc nulls last, created_at asc"
+    with get_cursor() as cur:
+        cur.execute(sql, params)
+        return cur.fetchall() or []
+
+
+def list_payment_rows(user_id: str, source_file_ids: list[str] | None = None) -> list[dict]:
+    sql = """
+    select id, provider_name_raw, provider_name_normalized, payment_date, amount
+      from payments
+     where user_id = %s
+    """
+    params: list = [user_id]
+    if source_file_ids:
+        sql += " and source_file_id = any(%s)"
+        params.append(source_file_ids)
+    sql += " order by payment_date asc nulls last, created_at asc"
+    with get_cursor() as cur:
+        cur.execute(sql, params)
+        return cur.fetchall() or []
+
+
+def replace_findings_for_user(user_id: str, findings: list[dict]):
+    delete_sql = "delete from findings where user_id = %s"
+    insert_sql = """
+    insert into findings (
+      id, user_id, finding_type, severity, status, title, summary, details
+    ) values (
+      gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s::jsonb
+    )
+    """
+    import json
+
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(delete_sql, (user_id,))
+            for finding in findings:
+                cur.execute(
+                    insert_sql,
+                    (
+                        user_id,
+                        finding["finding_type"],
+                        finding["severity"],
+                        finding.get("status", "open"),
+                        finding["title"],
+                        finding["summary"],
+                        json.dumps(finding.get("details", {})),
+                    ),
+                )
 
 
 def get_file_record(file_id: str) -> dict | None:

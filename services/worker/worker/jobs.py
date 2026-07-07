@@ -7,6 +7,8 @@ from worker.db import mark_file_processed as default_mark_file_processed
 from worker.db import mark_job_running as default_mark_job_running
 from worker.db import mark_job_succeeded as default_mark_job_succeeded
 from worker.extract.tables import extract_tables as default_extract_tables
+from worker.db import delete_claim_rows_for_file as default_delete_claim_rows_for_file
+from worker.db import delete_payment_rows_for_file as default_delete_payment_rows_for_file
 from worker.normalize.claims import normalize_claim_rows as default_normalize_claim_rows
 from worker.normalize.payments import normalize_payment_rows as default_normalize_payment_rows
 from worker.persist.claims import persist_claim_rows as default_persist_claim_rows
@@ -26,6 +28,10 @@ def process_claim_job(
         "normalize_claim_rows", default_normalize_claim_rows
     )
     persist_claim_rows = resolved.get("persist_claim_rows", default_persist_claim_rows)
+    delete_claim_rows_for_file = resolved.get(
+        "delete_claim_rows_for_file",
+        (lambda file_id: None) if deps is not None else default_delete_claim_rows_for_file,
+    )
     mark_file_processed = resolved.get(
         "mark_file_processed",
         (lambda file_id: None) if deps is not None else default_mark_file_processed,
@@ -36,7 +42,7 @@ def process_claim_job(
     )
 
     file_record = None
-    if "get_file_record" in resolved or get_file_record is not default_get_file_record:
+    if deps is None or "get_file_record" in resolved or get_file_record is not default_get_file_record:
         file_record = get_file_record(job["file_id"])
     file_record = file_record or {
         "id": job["file_id"],
@@ -47,6 +53,7 @@ def process_claim_job(
     downloaded_path = download_source_file(file_record)
     rows = extract_tables(downloaded_path)
     normalized_rows = normalize_claim_rows(rows)
+    delete_claim_rows_for_file(job["file_id"])
     persist_claim_rows(job.get("user_id", ""), job["file_id"], normalized_rows)
     mark_file_processed(job["file_id"])
     mark_job_succeeded(job["id"])
@@ -67,6 +74,10 @@ def process_payment_job(
     persist_payment_rows = resolved.get(
         "persist_payment_rows", default_persist_payment_rows
     )
+    delete_payment_rows_for_file = resolved.get(
+        "delete_payment_rows_for_file",
+        (lambda file_id: None) if deps is not None else default_delete_payment_rows_for_file,
+    )
     mark_file_processed = resolved.get(
         "mark_file_processed",
         (lambda file_id: None) if deps is not None else default_mark_file_processed,
@@ -77,7 +88,7 @@ def process_payment_job(
     )
 
     file_record = None
-    if "get_file_record" in resolved or get_file_record is not default_get_file_record:
+    if deps is None or "get_file_record" in resolved or get_file_record is not default_get_file_record:
         file_record = get_file_record(job["file_id"])
     file_record = file_record or {
         "id": job["file_id"],
@@ -88,6 +99,7 @@ def process_payment_job(
     downloaded_path = download_source_file(file_record)
     rows = extract_tables(downloaded_path)
     normalized_rows = normalize_payment_rows(rows)
+    delete_payment_rows_for_file(job["file_id"])
     persist_payment_rows(job.get("user_id", ""), job["file_id"], normalized_rows)
     mark_file_processed(job["file_id"])
     mark_job_succeeded(job["id"])

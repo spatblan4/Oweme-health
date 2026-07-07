@@ -13,7 +13,7 @@ def test_process_claim_job_persists_rows_and_marks_file_processed(tmp_path: Path
             "file_id": "file-1",
         },
         deps={
-            "download_source_file": lambda file_id: tmp_path / f"{file_id}.pdf",
+            "download_source_file": lambda file_record: tmp_path / f"{file_record['id']}.pdf",
             "extract_tables": lambda path: [{"provider": "KIM,JAMES,D,DDS", "service_date": "2026-07-03"}],
             "normalize_claim_rows": lambda rows: [
                 {
@@ -30,4 +30,3 @@ def test_process_claim_job_persists_rows_and_marks_file_processed(tmp_path: Path
 
     assert processed == 1
     assert lifecycle == [("file-1", "processed"), ("job-1", "succeeded")]
-

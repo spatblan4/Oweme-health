@@ -11,7 +11,7 @@ export default function LoginPage() {
         padding: 32,
       }}
     >
-      <LoginForm />
+      <LoginForm showDevLogin={process.env.NODE_ENV !== "production"} />
     </main>
   );
 }

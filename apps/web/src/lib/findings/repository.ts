@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from "@/lib/auth/server";
+import { createAdminSupabaseClient } from "@/lib/auth/admin";
 
 type FindingRecord = Record<string, unknown>;
 
@@ -7,7 +7,7 @@ type ListFindingsDeps = {
 };
 
 export async function getOwnedFindings(userId: string) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("findings")
     .select("*")

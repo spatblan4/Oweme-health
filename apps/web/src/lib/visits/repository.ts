@@ -1,4 +1,5 @@
-import { createServerSupabaseClient } from "@/lib/auth/server";
+import { createAdminSupabaseClient } from "@/lib/auth/admin";
+import { DEV_TEST_USER_ID, ensureDevTestUser } from "@/lib/auth/dev-login";
 import {
   parseVisitCreateInput,
   parseVisitPatchInput,
@@ -28,7 +29,7 @@ type UpdateVisitDeps = {
 };
 
 export async function getOwnedVisits(userId: string) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("visits")
     .select("*")
@@ -43,7 +44,13 @@ export async function getOwnedVisits(userId: string) {
 }
 
 export async function insertVisitRow(row: Record<string, unknown>) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
+  if (process.env.NODE_ENV !== "production" && row.user_id === DEV_TEST_USER_ID) {
+    await ensureDevTestUser({
+      listUsers: () => supabase.auth.admin.listUsers(),
+      createUser: (args) => supabase.auth.admin.createUser(args),
+    });
+  }
   const { data, error } = await supabase.from("visits").insert(row).select("*").single();
   if (error) {
     throw new Error(`Failed to create visit: ${error.message}`);
@@ -56,7 +63,7 @@ export async function patchOwnedVisitRow(
   visitId: string,
   patch: Record<string, unknown>,
 ) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("visits")
     .update(patch)

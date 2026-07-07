@@ -22,7 +22,9 @@ backups/
 *.db
 *.log
 .playwright-cli/
+.superpowers/
 oweme-health-prototype/output/
+apps/web/.next.before-clean-*/
 
 # Personal project context and real medical data must stay private.
 OWEME_HEALTH_CONTEXT.md

@@ -10,7 +10,8 @@ def test_poll_once_marks_a_queued_job_running(tmp_path: Path):
         deps={
             "claim_next_job": lambda: {"id": "job-1", "file_id": "file-1"},
             "mark_job_running": lambda job_id: transitions.append((job_id, "running")),
-            "download_source_file": lambda file_id: tmp_path / f"{file_id}.pdf",
+            "download_source_file": lambda file_record: tmp_path / f"{file_record['id']}.pdf",
+            "extract_tables": lambda path: [],
         }
     )
 
@@ -28,4 +29,3 @@ def test_poll_once_returns_zero_when_no_job_is_available():
     )
 
     assert processed == 0
-

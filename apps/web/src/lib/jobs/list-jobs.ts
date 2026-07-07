@@ -1,7 +1,7 @@
-import { createServerSupabaseClient } from "@/lib/auth/server";
+import { createAdminSupabaseClient } from "@/lib/auth/admin";
 
 export async function listRecentJobs(userId: string) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("file_jobs")
     .select("id,status,job_type,file_id,created_at")

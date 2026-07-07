@@ -1,4 +1,5 @@
-import { createServerSupabaseClient } from "@/lib/auth/server";
+import { createAdminSupabaseClient } from "@/lib/auth/admin";
+import { DEV_TEST_USER_ID, ensureDevTestUser } from "@/lib/auth/dev-login";
 
 type FileRowInsert = {
   id: string;
@@ -22,7 +23,13 @@ type OwnedFileRow = {
 };
 
 export async function insertFileRow(file: FileRowInsert) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
+  if (process.env.NODE_ENV !== "production" && file.user_id === DEV_TEST_USER_ID) {
+    await ensureDevTestUser({
+      listUsers: () => supabase.auth.admin.listUsers(),
+      createUser: (args) => supabase.auth.admin.createUser(args),
+    });
+  }
   const { error } = await supabase.from("files").insert(file);
   if (error) {
     throw new Error(`Failed to insert file row: ${error.message}`);
@@ -33,7 +40,7 @@ export async function getOwnedFileRow(
   userId: string,
   fileId: string,
 ): Promise<OwnedFileRow | null> {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("files")
     .select("id,user_id,bucket,storage_path,status")

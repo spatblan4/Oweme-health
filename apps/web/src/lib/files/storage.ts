@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from "@/lib/auth/server";
+import { createAdminSupabaseClient } from "@/lib/auth/admin";
 
 function splitStoragePath(storagePath: string) {
   const lastSlash = storagePath.lastIndexOf("/");
@@ -19,7 +19,7 @@ export async function createSignedUploadUrl(args: {
   bucket: string;
   storagePath: string;
 }) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase.storage
     .from(args.bucket)
     .createSignedUploadUrl(args.storagePath);
@@ -35,7 +35,7 @@ export async function confirmObjectExists(args: {
   bucket: string;
   storagePath: string;
 }) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const { folder, fileName } = splitStoragePath(args.storagePath);
   const { data, error } = await supabase.storage.from(args.bucket).list(folder, {
     limit: 10,

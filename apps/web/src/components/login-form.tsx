@@ -1,20 +1,86 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import { createBrowserSupabaseClient } from "@/lib/auth/client";
+import { readSupabaseSessionFromHash } from "@/lib/auth/hash-session";
 
-export function LoginForm() {
+export function LoginForm({ showDevLogin = false }: { showDevLogin?: boolean }) {
   const supabase = useMemo(() => {
     try {
       return createBrowserSupabaseClient();
-    } catch {
+    } catch (error) {
+      console.error(error);
       return null;
     }
   }, []);
+  const [isLocalHost, setIsLocalHost] = useState(false);
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setIsLocalHost(
+      typeof window !== "undefined" &&
+        (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) {
+      return;
+    }
+
+    const session = readSupabaseSessionFromHash(window.location.hash);
+    if (!session) {
+      return;
+    }
+
+    const client = supabase;
+    const hashSession = session;
+    let cancelled = false;
+
+    async function finishDevLogin() {
+      setStatus("sending");
+      setMessage("Finishing sign in...");
+
+      const { error } = await client.auth.setSession({
+        access_token: hashSession.accessToken,
+        refresh_token: hashSession.refreshToken,
+      });
+
+      if (cancelled) {
+        return;
+      }
+
+      if (error) {
+        setStatus("error");
+        setMessage(error.message);
+        return;
+      }
+
+      const syncResponse = await fetch("/api/auth/sync-session", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (!syncResponse.ok) {
+        setStatus("error");
+        setMessage("Signed in, but could not sync your local session yet.");
+        return;
+      }
+
+      const next = new URLSearchParams(window.location.search).get("next") ?? "/dashboard";
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      window.location.assign(next);
+    }
+
+    void finishDevLogin();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -117,6 +183,27 @@ export function LoginForm() {
         </button>
       </form>
 
+      {showDevLogin || isLocalHost ? (
+        <form action="/api/dev/login" method="post" style={{ marginTop: 12 }}>
+          <button
+            type="submit"
+            style={{
+              height: 48,
+              width: "100%",
+              borderRadius: 8,
+              border: "1px solid #d9e1ea",
+              background: "#f8fbff",
+              color: "#152235",
+              fontSize: 15,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Use dev test account
+          </button>
+        </form>
+      ) : null}
+
       {message ? (
         <p
           style={{
@@ -131,4 +218,3 @@ export function LoginForm() {
     </section>
   );
 }
-

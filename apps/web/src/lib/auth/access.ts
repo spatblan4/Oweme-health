@@ -2,7 +2,7 @@ export type AccessDecision =
   | { action: "allow" }
   | { action: "redirect"; location: string };
 
-const PUBLIC_PATHS = new Set(["/login"]);
+const PUBLIC_PATHS = new Set(["/login", "/auth/callback"]);
 
 export function resolveAppAccess(
   userId: string | null,
@@ -20,4 +20,3 @@ export function resolveAppAccess(
 
   return { action: "allow" };
 }
-
