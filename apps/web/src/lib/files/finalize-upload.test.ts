@@ -7,6 +7,7 @@ describe("finalizeUpload", () => {
     const getOwnedFile = vi.fn().mockResolvedValue({
       id: "file-1",
       user_id: "user-1",
+      kind: "claim",
       bucket: "uploads",
       storage_path: "uploads/user-1/file-1-claim-results-3.xlsx",
       status: "uploaded",
@@ -32,6 +33,7 @@ describe("finalizeUpload", () => {
     expect(result).toEqual({
       fileId: "file-1",
       ready: true,
+      kind: "claim",
     });
   });
 
@@ -46,6 +48,7 @@ describe("finalizeUpload", () => {
           getOwnedFile: vi.fn().mockResolvedValue({
             id: "file-1",
             user_id: "user-1",
+            kind: "claim",
             bucket: "uploads",
             storage_path: "uploads/user-1/file-1.pdf",
             status: "uploaded",

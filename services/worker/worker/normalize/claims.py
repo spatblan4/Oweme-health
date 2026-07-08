@@ -1,6 +1,7 @@
 from worker.normalize.common import normalize_iso_date
 from worker.normalize.common import normalize_money
 from worker.normalize.common import normalize_provider_name
+from worker.normalize.common import unique_provider_aliases
 
 
 def _pick(row: dict, keys: list[str]) -> str:
@@ -15,22 +16,19 @@ def _pick(row: dict, keys: list[str]) -> str:
 def normalize_claim_rows(rows: list[dict]) -> list[dict]:
     normalized: list[dict] = []
     for row in rows:
-        provider_raw = _pick(
-            row,
-            [
-                "provider",
-                "provider name",
-                "provider_name",
-                "rendering provider",
-                "dentist",
-                "facility",
-                "merchant",
-            ],
-        )
+        provider_candidates = [
+            _pick(row, ["provider", "provider name", "provider_name"]),
+            _pick(row, ["rendering provider", "dentist", "doctor", "physician"]),
+            _pick(row, ["facility", "facility name", "clinic", "practice", "office"]),
+            _pick(row, ["merchant"]),
+        ]
+        provider_aliases = unique_provider_aliases(provider_candidates)
+        provider_raw = provider_aliases[0] if provider_aliases else ""
         normalized.append(
             {
                 "provider_name_raw": provider_raw,
                 "provider_name_normalized": normalize_provider_name(provider_raw),
+                "provider_aliases": provider_aliases,
                 "service_date": normalize_iso_date(
                     _pick(
                         row,

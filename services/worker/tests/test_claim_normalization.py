@@ -40,3 +40,21 @@ def test_normalize_claim_rows_accepts_service_begin_date_headers():
 
     assert normalized[0]["provider_name_raw"] == "JAMES KIM"
     assert normalized[0]["service_date"] == "2026-05-13"
+
+
+def test_normalize_claim_rows_collects_provider_aliases_from_doctor_and_facility_fields():
+    rows = [
+        {
+            "PROVIDER NAME": "JAMES D KIM",
+            "FACILITY": "Stone Creek Village Dentistry",
+            "SERVICE BEGIN DATE": "05/13/2026",
+        }
+    ]
+
+    normalized = normalize_claim_rows(rows)
+
+    assert normalized[0]["provider_name_raw"] == "JAMES D KIM"
+    assert normalized[0]["provider_aliases"] == [
+        "JAMES D KIM",
+        "Stone Creek Village Dentistry",
+    ]

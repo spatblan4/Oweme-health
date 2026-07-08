@@ -1,6 +1,7 @@
 type OwnedFile = {
   id: string;
   user_id: string;
+  kind: string;
   bucket: string;
   storage_path: string;
   status: string;
@@ -38,6 +39,6 @@ export async function finalizeUpload(
   return {
     fileId: file.id,
     ready: true,
+    kind: file.kind,
   };
 }
-

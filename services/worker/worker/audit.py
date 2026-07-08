@@ -77,19 +77,67 @@ def provider_match_score(left: Any, right: Any) -> float:
     return overlap / min(len(left_tokens), len(right_tokens))
 
 
-def _likely_provider_payment(payment: dict, grouped_claims: dict[tuple[str, str], dict[str, Any]]) -> bool:
-    provider_name = str(
-        payment.get("provider_name_raw") or payment.get("provider_name_normalized") or ""
+def _provider_aliases(record: dict) -> list[str]:
+    payload = record.get("normalized_payload")
+    if isinstance(payload, dict):
+      aliases = payload.get("provider_aliases")
+      if isinstance(aliases, list):
+          values = [str(alias).strip() for alias in aliases if str(alias).strip()]
+          if values:
+              return values
+    fallback = [
+        str(record.get("provider_name_raw") or "").strip(),
+        str(record.get("provider_name_normalized") or "").strip(),
+    ]
+    return [value for value in fallback if value]
+
+
+def _best_provider_match_score(left_aliases: list[str], right_aliases: list[str]) -> float:
+    best = 0.0
+    for left in left_aliases:
+        for right in right_aliases:
+            best = max(best, provider_match_score(left, right))
+    return best
+
+
+def _primary_provider_match_score(left_values: list[str], right: dict) -> float:
+    left_primary = next((value for value in left_values if value.strip()), "")
+    right_primary = (
+        str(right.get("provider_name_raw") or "").strip()
+        or str(right.get("provider_name_normalized") or "").strip()
     )
-    text = provider_name.lower()
-    if re.search(
-        r"\b(dental|dentist|dds|dmd|medical|clinic|hospital|health|care|orthodont|vision|doctor|physician|surgery|dermatology|radiology|laboratory|labcorp|quest)\b",
-        text,
+    return provider_match_score(left_primary, right_primary)
+
+
+def _looks_like_clinic_name(value: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(dental|dentistry|clinic|medical|health|care|group|associates|orthodont|vision|diagnostics|lab|center|centre|hospital|practice)\b",
+            value.lower(),
+        )
+    )
+
+
+def _preferred_display_name(aliases: list[str], fallback: str) -> str:
+    for alias in aliases:
+        if _looks_like_clinic_name(alias):
+            return alias
+    return aliases[0] if aliases else fallback
+
+
+def _likely_provider_payment(payment: dict, grouped_claims: dict[tuple[str, str], dict[str, Any]]) -> bool:
+    aliases = _provider_aliases(payment)
+    if any(
+        re.search(
+            r"\b(dental|dentist|dds|dmd|medical|clinic|hospital|health|care|orthodont|vision|doctor|physician|surgery|dermatology|radiology|laboratory|labcorp|quest|diagnostics)\b",
+            alias.lower(),
+        )
+        for alias in aliases
     ):
         return True
 
     return any(
-        provider_match_score(group["provider_name"], provider_name) > 0.28
+        _best_provider_match_score(group["provider_aliases"], aliases) > 0.28
         for group in grouped_claims.values()
     )
 
@@ -102,15 +150,57 @@ def _days_between(left: Any, right: Any) -> int | None:
     return (right_date - left_date).days
 
 
+def _candidate_payments_for_group(group: dict[str, Any], payments_by_id: dict[str, dict]) -> list[dict[str, str]]:
+    candidates: list[tuple[float, int, Decimal, dict[str, str]]] = []
+    responsibility = group["responsibility"]
+
+    for payment_id, payment in payments_by_id.items():
+        if payment in group["matched_payments"]:
+            continue
+
+        name_score = _best_provider_match_score(group["provider_aliases"], _provider_aliases(payment))
+        day_gap = _days_between(group["service_date"], payment.get("payment_date"))
+        amount = _money(payment.get("amount"))
+        if day_gap is None or day_gap < 0 or day_gap > 45 or name_score <= 0.25 or amount < responsibility:
+            continue
+
+        candidates.append(
+            (
+                name_score,
+                day_gap,
+                amount,
+                {
+                    "payment_id": str(payment_id),
+                    "provider_name": str(
+                        payment.get("provider_name_raw")
+                        or payment.get("provider_name_normalized")
+                        or "Unknown payment"
+                    ).strip(),
+                    "payment_date": str(payment.get("payment_date") or ""),
+                    "amount": _money_text(amount),
+                    "payment_source": str(payment.get("payment_source") or ""),
+                    "match_hint": "Possible bundled payment",
+                },
+            )
+        )
+
+    candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return [candidate for _, _, _, candidate in candidates[:3]]
+
+
 def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
     grouped_claims: dict[tuple[str, str], dict[str, Any]] = {}
 
     for claim in claims:
-        provider_name = str(
-            claim.get("provider_name_raw")
-            or claim.get("provider_name_normalized")
-            or "Provider under review"
-        ).strip()
+        provider_aliases = _provider_aliases(claim)
+        provider_name = _preferred_display_name(
+            provider_aliases,
+            str(
+                claim.get("provider_name_raw")
+                or claim.get("provider_name_normalized")
+                or "Provider under review"
+            ).strip(),
+        )
         provider_key = str(
             claim.get("provider_name_normalized") or provider_name.lower()
         ).strip()
@@ -121,6 +211,11 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
             grouped_claims[key] = {
                 "provider_name": provider_name,
                 "provider_key": provider_key,
+                "provider_aliases": provider_aliases,
+                "primary_provider_values": [
+                    str(claim.get("provider_name_raw") or "").strip(),
+                    str(claim.get("provider_name_normalized") or "").strip(),
+                ],
                 "service_date": service_date,
                 "responsibility": Decimal("0.00"),
                 "claim_ids": [],
@@ -147,11 +242,15 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
         best_score = 0.0
 
         for key, group in grouped_claims.items():
-            name_score = provider_match_score(
-                group["provider_name"], payment.get("provider_name_raw")
-            )
+            name_score = _best_provider_match_score(group["provider_aliases"], _provider_aliases(payment))
+            primary_name_score = _primary_provider_match_score(group["primary_provider_values"], payment)
             day_gap = _days_between(group["service_date"], payment.get("payment_date"))
             if day_gap is None or day_gap < 0 or day_gap > 60 or name_score <= 0.25:
+                continue
+
+            responsibility = group["responsibility"]
+            amount = _money(payment.get("amount"))
+            if primary_name_score < 0.45 and amount > (responsibility * Decimal("1.5")):
                 continue
 
             date_score = 1 - (day_gap / 80)
@@ -165,6 +264,7 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
             matched_payment_ids.add(payment_id)
 
     findings: list[dict] = []
+    candidate_payment_ids: set[str] = set()
     for group in grouped_claims.values():
         paid_amount = sum(
             (_money(payment.get("amount")) for payment in group["matched_payments"]),
@@ -196,18 +296,32 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
             continue
 
         if responsibility > Decimal("0.00") and not group["matched_payments"]:
+            candidate_payments = _candidate_payments_for_group(group, payments_by_id)
+            candidate_payment_ids.update(
+                str(candidate.get("payment_id"))
+                for candidate in candidate_payments
+                if candidate.get("payment_id")
+            )
             findings.append(
                 {
                     "finding_type": "allocation_unclear",
                     "severity": "attention",
                     "status": "open",
                     "title": provider_name,
-                    "summary": f"Claim from {service_date} shows {_money_text(responsibility)} patient responsibility, but no matching payment was found yet.",
+                    "summary": (
+                        f"Claim from {service_date} shows {_money_text(responsibility)} patient responsibility, "
+                        + (
+                            "and a larger payment may include this visit."
+                            if candidate_payments
+                            else "but no matching payment was found yet."
+                        )
+                    ),
                     "details": {
                         "provider_name": provider_name,
                         "service_date": service_date,
                         "responsibility_amount": _money_text(responsibility),
                         "claim_ids": group["claim_ids"],
+                        "candidate_payments": candidate_payments,
                     },
                 }
             )
@@ -239,6 +353,8 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
     unmatched_groups: dict[str, list[dict]] = defaultdict(list)
     for payment_id, payment in payments_by_id.items():
         if payment_id in matched_payment_ids:
+            continue
+        if payment_id in candidate_payment_ids:
             continue
         if not _likely_provider_payment(payment, grouped_claims):
             continue

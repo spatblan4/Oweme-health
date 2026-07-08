@@ -1,6 +1,7 @@
-import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
 import { DashboardShell } from "@/components/dashboard-shell";
+import { createServerSupabaseClient } from "@/lib/auth/server";
 import { loadDashboardData } from "@/lib/dashboard/load-dashboard-data";
 
 function normalizeDashboardView(value: string | undefined) {
@@ -19,15 +20,19 @@ export default async function DashboardPage({
 }: {
   searchParams?: Promise<{ view?: string }>;
 }) {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get("oweme-user-id")?.value;
   const params = await searchParams;
   const initialView = normalizeDashboardView(params?.view);
 
-  if (!userId) {
-    return <DashboardShell jobs={[]} visits={[]} findings={[]} initialView={initialView} />;
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
   }
 
+  const userId = user.id;
   let data: DashboardData = emptyDashboardData;
   try {
     data = await loadDashboardData(userId);

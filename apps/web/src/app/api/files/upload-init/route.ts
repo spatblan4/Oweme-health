@@ -8,7 +8,7 @@ import { createSignedUploadUrl } from "@/lib/files/storage";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const userId = requireRequestUserId(request);
+    const userId = await requireRequestUserId(request);
     const result = await createUpload(
       {
         userId,

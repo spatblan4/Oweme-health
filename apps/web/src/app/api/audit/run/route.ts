@@ -6,7 +6,7 @@ import { runSyncAudit } from "@/lib/audit/run-sync-audit";
 
 export async function POST(request: Request) {
   try {
-    const userId = requireRequestUserId(request);
+    const userId = await requireRequestUserId(request);
     const body = (await request.json().catch(() => ({}))) as {
       claimFileIds?: string[];
       paymentFileIds?: string[];

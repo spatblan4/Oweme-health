@@ -9,7 +9,7 @@ type Params = {
 
 export async function PATCH(request: Request, { params }: Params) {
   try {
-    const userId = requireRequestUserId(request);
+    const userId = await requireRequestUserId(request);
     const body = await request.json();
     const { id } = await params;
     const result = await updateVisit(userId, id, body);
@@ -21,4 +21,3 @@ export async function PATCH(request: Request, { params }: Params) {
     return NextResponse.json({ error: message }, { status });
   }
 }
-

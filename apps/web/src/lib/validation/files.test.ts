@@ -42,5 +42,15 @@ describe("parseUploadInitInput", () => {
       }),
     ).toThrow("Invalid upload metadata");
   });
-});
 
+  it("rejects image uploads that the worker cannot OCR yet", () => {
+    expect(() =>
+      parseUploadInitInput({
+        kind: "payment",
+        originalName: "statement.png",
+        mimeType: "image/png",
+        fileSizeBytes: 2048,
+      }),
+    ).toThrow("Invalid upload metadata");
+  });
+});

@@ -189,7 +189,7 @@ def delete_payment_rows_for_file(file_id: str):
 
 def list_claim_rows(user_id: str, source_file_ids: list[str] | None = None) -> list[dict]:
     sql = """
-    select id, provider_name_raw, provider_name_normalized, service_date, patient_responsibility, status
+    select id, provider_name_raw, provider_name_normalized, service_date, patient_responsibility, status, normalized_payload
       from claims
      where user_id = %s
     """
@@ -205,7 +205,7 @@ def list_claim_rows(user_id: str, source_file_ids: list[str] | None = None) -> l
 
 def list_payment_rows(user_id: str, source_file_ids: list[str] | None = None) -> list[dict]:
     sql = """
-    select id, provider_name_raw, provider_name_normalized, payment_date, amount
+    select id, provider_name_raw, provider_name_normalized, payment_date, amount, normalized_payload
       from payments
      where user_id = %s
     """

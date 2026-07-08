@@ -9,6 +9,23 @@ def normalize_provider_name(value: str) -> str:
     return re.sub(r"\s+", " ", cleaned)
 
 
+def unique_provider_aliases(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    aliases: list[str] = []
+
+    for value in values:
+        raw = str(value or "").strip()
+        if not raw:
+            continue
+        key = normalize_provider_name(raw)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        aliases.append(raw)
+
+    return aliases
+
+
 def normalize_money(value: str | int | float | Decimal | None) -> str:
     if value is None:
         return "0.00"
@@ -35,4 +52,3 @@ def normalize_iso_date(value: str | date | datetime | None) -> str | None:
         except ValueError:
             continue
     return text or None
-

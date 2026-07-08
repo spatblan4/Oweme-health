@@ -23,3 +23,20 @@ def test_normalize_payment_rows_parses_payment_date():
     normalized = normalize_payment_rows(rows)
 
     assert normalized[0]["payment_date"] == "2026-05-20"
+
+
+def test_normalize_payment_rows_collects_provider_aliases():
+    rows = [
+        {
+            "merchant": "Stone Creek Village Dentistry",
+            "description": "JAMES D KIM DDS",
+            "amount": "$78.00",
+        }
+    ]
+
+    normalized = normalize_payment_rows(rows)
+
+    assert normalized[0]["provider_aliases"] == [
+        "Stone Creek Village Dentistry",
+        "JAMES D KIM DDS",
+    ]

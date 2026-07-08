@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireRequestUserId } from "@/lib/auth/request-user";
-import { getOwnedFileRow } from "@/lib/db/files";
+import { patchOwnedFileRow, getOwnedFileRow } from "@/lib/db/files";
 import { insertJobRow } from "@/lib/db/jobs";
 import { createFileJob } from "@/lib/jobs/create-job";
 
@@ -11,7 +11,7 @@ type Params = {
 
 export async function POST(request: Request, { params }: Params) {
   try {
-    const userId = requireRequestUserId(request);
+    const userId = await requireRequestUserId(request);
     const body = (await request.json().catch(() => ({}))) as { jobType?: string };
     const { id } = await params;
 
@@ -29,6 +29,10 @@ export async function POST(request: Request, { params }: Params) {
       },
     );
 
+    await patchOwnedFileRow(userId, id, {
+      status: "processing",
+    });
+
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error";
@@ -36,4 +40,3 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ error: message }, { status });
   }
 }
-

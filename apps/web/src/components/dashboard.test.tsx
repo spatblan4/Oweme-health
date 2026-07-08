@@ -44,17 +44,97 @@ describe("DashboardShell", () => {
 
   it("can render directly into a non-overview workspace view", () => {
     const html = renderToStaticMarkup(
-      <DashboardShell jobs={[]} visits={[]} findings={[]} initialView="past" />,
+      <DashboardShell
+        jobs={[]}
+        visits={[{ id: "visit-1", provider_name: "Stone Creek Village Dentistry" }]}
+        findings={[{ id: "finding-1", provider_name: "Quest Diagnostics" }]}
+        initialView="future"
+      />,
     );
 
-    expect(html).toContain("Check old bills");
-    expect(html).toContain("Run audit");
-    expect(html).not.toContain("Privacy-first prototype");
-    expect(html).toContain('id="claims-file-input"');
-    expect(html).toContain('type="file"');
-    expect(html).toContain('accept=".csv,.pdf,.xls,.xlsx,.png,.jpg,.jpeg"');
-    expect(html).toContain('for="claims-file-input"');
-    expect(html).toContain('for="payments-file-input"');
-    expect(html).not.toContain("file jobs ready");
+    expect(html).toContain("Log a visit before it disappears");
+    expect(html).toContain('list="provider-suggestions"');
+    expect(html).toContain('<datalist id="provider-suggestions">');
+    expect(html).toContain("Stone Creek Village Dentistry");
+    expect(html).toContain("Quest Diagnostics");
+    expect(html).toContain('value=""');
+    expect(html).not.toContain('value="275.00"');
+    expect(html).toContain('value="" selected="">Select payment method');
+    expect(html).toContain('value="" selected="">Select visit type');
+  });
+
+  it("renders the past credits workspace with visit-based matching UI", () => {
+    const html = renderToStaticMarkup(
+      <DashboardShell
+        jobs={[]}
+        visits={[]}
+        findings={[
+          {
+            id: "finding-3",
+            provider_name: "JAMES D KIM",
+            finding_type: "allocation_unclear",
+            status: "open",
+            title: "JAMES D KIM",
+            summary: "Claim from 2026-05-13 shows $12.40 patient responsibility, and a larger payment may include this visit.",
+            details: {
+              provider_name: "JAMES D KIM",
+              service_date: "2026-05-13",
+              responsibility_amount: "12.40",
+              candidate_payments: [
+                {
+                  payment_id: "payment-1",
+                  provider_name: "Stone Creek Village Dentistry",
+                  payment_date: "2026-05-20",
+                  amount: "78.00",
+                  match_hint: "Possible bundled payment",
+                },
+              ],
+            },
+          },
+          {
+            id: "finding-1",
+            provider_name: "Stone Creek Village Dentistry",
+            finding_type: "possible_credit",
+            status: "open",
+            title: "Stone Creek Village Dentistry",
+            summary: "Paid $275.00 for Jul 4, 2026, but the claim says you owe $78.00.",
+            details: {
+              provider_name: "Stone Creek Village Dentistry",
+              service_date: "2026-07-04",
+              paid_amount: "275.00",
+              responsibility_amount: "78.00",
+              credit_amount: "197.00",
+            },
+          },
+          {
+            id: "finding-2",
+            provider_name: "Quest Diagnostics",
+            finding_type: "allocation_unclear",
+            status: "open",
+            title: "Quest Diagnostics",
+            summary: "Claim from 2026-05-08 shows $32.40 patient responsibility, but no matching payment was found yet.",
+            details: {
+              provider_name: "Quest Diagnostics",
+              service_date: "2026-05-08",
+              responsibility_amount: "32.40",
+            },
+          },
+        ]}
+        initialView="past"
+      />,
+    );
+
+    expect(html).toContain("Matched confidently");
+    expect(html).toContain("Need review");
+    expect(html).toContain("Unexplained payments");
+    expect(html).toContain("Review queue");
+    expect(html).toContain("Why we matched this");
+    expect(html).toContain("Confirm match");
+    expect(html).toContain("Not the same visit");
+    expect(html).toContain("Add receipt or payment");
+    expect(html).toContain("Possible bundled payment");
+    expect(html).toContain("Closest payment candidates");
+    expect(html).toContain("Stone Creek Village Dentistry");
+    expect(html).toContain("Possible overpayment");
   });
 });

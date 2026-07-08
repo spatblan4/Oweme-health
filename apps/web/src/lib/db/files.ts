@@ -17,9 +17,14 @@ type FileRowInsert = {
 type OwnedFileRow = {
   id: string;
   user_id: string;
+  kind: string;
   bucket: string;
   storage_path: string;
   status: string;
+};
+
+type UpdateOwnedFileRowPatch = {
+  status?: string;
 };
 
 export async function insertFileRow(file: FileRowInsert) {
@@ -43,13 +48,34 @@ export async function getOwnedFileRow(
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("files")
-    .select("id,user_id,bucket,storage_path,status")
+    .select("id,user_id,kind,bucket,storage_path,status")
     .eq("id", fileId)
     .eq("user_id", userId)
     .maybeSingle();
 
   if (error) {
     throw new Error(`Failed to fetch file row: ${error.message}`);
+  }
+
+  return data;
+}
+
+export async function patchOwnedFileRow(
+  userId: string,
+  fileId: string,
+  patch: UpdateOwnedFileRowPatch,
+) {
+  const supabase = createAdminSupabaseClient();
+  const { data, error } = await supabase
+    .from("files")
+    .update(patch)
+    .eq("id", fileId)
+    .eq("user_id", userId)
+    .select("id,user_id,kind,bucket,storage_path,status")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to update file row: ${error.message}`);
   }
 
   return data;

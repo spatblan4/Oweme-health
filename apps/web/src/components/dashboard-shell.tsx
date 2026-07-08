@@ -3,6 +3,13 @@
 import Link from "next/link";
 import React, { useMemo, useState } from "react";
 
+import {
+  buildVisitCreatePayload,
+  buildProviderSuggestions,
+  createDefaultFutureVisitDraft,
+} from "@/lib/dashboard/future-visit-draft";
+import { createSamplePastAuditState } from "@/lib/dashboard/sample-audit";
+
 type DashboardShellProps = {
   jobs: Array<Record<string, unknown>>;
   visits: Array<Record<string, unknown>>;
@@ -138,6 +145,83 @@ function futureFieldLabel(label: string) {
   );
 }
 
+type MatchFilterKey = "all" | "review" | "credit" | "unexplained";
+
+function detailText(value: unknown, fallback = "Not found yet") {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+  return String(value);
+}
+
+function findingDetails(finding: Record<string, unknown>) {
+  const raw = finding.details;
+  return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+}
+
+function findingStatusTone(findingType: string) {
+  if (findingType === "possible_credit") {
+    return "teal" as const;
+  }
+  if (findingType === "unexplained_payment") {
+    return "slate" as const;
+  }
+  return "amber" as const;
+}
+
+function hasBundledPaymentCandidate(finding: Record<string, unknown>) {
+  return candidatePayments(finding).length > 0;
+}
+
+function candidatePayments(finding: Record<string, unknown>) {
+  const raw = findingDetails(finding).candidate_payments;
+  return Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [];
+}
+
+function findingStatusLabel(finding: Record<string, unknown>) {
+  const findingType = String(finding.finding_type ?? "");
+  if (findingType === "possible_credit") {
+    return "Likely overpaid";
+  }
+  if (findingType === "unexplained_payment") {
+    return "Unexplained payment";
+  }
+  if (hasBundledPaymentCandidate(finding)) {
+    return "Possible overpayment";
+  }
+  return "Needs review";
+}
+
+function findingEvidenceBullets(finding: Record<string, unknown>) {
+  const details = findingDetails(finding);
+  const bullets: string[] = [];
+  const provider = detailText(details.provider_name ?? finding.provider_name, "");
+  const serviceDate = detailText(details.service_date, "");
+  const paidAmount = detailText(details.paid_amount, "");
+  const responsibility = detailText(details.responsibility_amount, "");
+
+  if (provider) {
+    bullets.push(`Provider alias matched around ${provider}.`);
+  }
+  if (serviceDate) {
+    bullets.push(`Service date anchored on ${serviceDate}.`);
+  }
+  if (paidAmount && responsibility) {
+    bullets.push(`Paid ${paidAmount} compared against EOB responsibility ${responsibility}.`);
+  } else if (responsibility) {
+    bullets.push(`EOB shows patient responsibility ${responsibility}, but payment evidence is still incomplete.`);
+  } else if (paidAmount) {
+    bullets.push(`Payment evidence shows ${paidAmount}, but the matching claim details are still incomplete.`);
+  }
+  if (candidatePayments(finding).length > 0) {
+    bullets.push("We found a larger nearby payment that may include this visit, so you may already have overpaid.");
+  }
+  if (!bullets.length) {
+    bullets.push("This item still needs manual review because the source evidence is incomplete.");
+  }
+  return bullets;
+}
+
 type UploadKind = "claim" | "payment";
 type UploadStatus = "uploading" | "uploaded" | "error";
 type LocalUpload = {
@@ -147,14 +231,12 @@ type LocalUpload = {
   error?: string;
 };
 
-const ACCEPTED_UPLOAD_EXTENSIONS = [".csv", ".pdf", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"];
+const ACCEPTED_UPLOAD_EXTENSIONS = [".csv", ".pdf", ".xls", ".xlsx"];
 const ACCEPTED_UPLOAD_MIME_TYPES = [
   "text/csv",
   "application/pdf",
   "application/vnd.ms-excel",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "image/png",
-  "image/jpeg",
 ];
 const ACCEPTED_UPLOAD_ATTR = ACCEPTED_UPLOAD_EXTENSIONS.join(",");
 const MAX_FILES_PER_UPLOAD = 5;
@@ -308,42 +390,83 @@ export function DashboardShell({
   initialView = "overview",
 }: DashboardShellProps) {
   const activeView = initialView;
+  const [visitItems, setVisitItems] = useState(visits);
+  const [findingItems, setFindingItems] = useState(findings);
   const [selectedUploads, setSelectedUploads] = useState<Record<UploadKind, LocalUpload[]>>({
     claim: [],
     payment: [],
   });
   const [pastAuditStatus, setPastAuditStatus] = useState<string>("");
   const [isRunningAudit, setIsRunningAudit] = useState(false);
-  const [futureVisitDraft, setFutureVisitDraft] = useState({
-    provider: "Stone Creek Village Dentistry",
-    visitType: "Dental",
-    visitDate: "2026-07-04",
-    paidToday: "275.00",
-    paidWith: "Personal card",
-    needsReimbursement: false,
-    insurance: "",
-    claimReadyIn: "3 weeks",
-    notes: "",
+  const [futureVisitDraft, setFutureVisitDraft] = useState(createDefaultFutureVisitDraft);
+  const [futureVisitStatus, setFutureVisitStatus] = useState("");
+  const [isSavingVisit, setIsSavingVisit] = useState(false);
+  const [manualFallbackDraft, setManualFallbackDraft] = useState({
+    paymentSource: "Receipt",
+    providerName: "",
+    paymentDate: "",
+    amount: "",
   });
+  const [isSavingManualFallback, setIsSavingManualFallback] = useState(false);
+  const [matchFilter, setMatchFilter] = useState<MatchFilterKey>("all");
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(
+    findings[0] ? String(findings[0].id) : null,
+  );
 
   const totalPossibleCredit = useMemo(() => {
-    return findings.reduce((sum, finding) => {
+    return findingItems.reduce((sum, finding) => {
       const details = finding.details as Record<string, unknown> | undefined;
       return sum + parseAmount(details?.credit_amount ?? finding.credit_amount);
     }, 0);
-  }, [findings]);
+  }, [findingItems]);
 
   const providerCount = useMemo(() => {
     const names = new Set(
-      findings
+      findingItems
         .map((finding) => String(finding.provider_name ?? finding.providerName ?? ""))
         .filter(Boolean),
     );
-    return names.size || findings.length;
-  }, [findings]);
+    return names.size || findingItems.length;
+  }, [findingItems]);
 
-  const reviewItems = findings.filter((finding) => String(finding.status ?? "open") !== "resolved");
-  const recentVisit = visits[0];
+  const reviewItems = findingItems.filter((finding) => String(finding.status ?? "open") !== "resolved");
+  const recentVisit = visitItems[0];
+  const providerSuggestions = useMemo(
+    () => buildProviderSuggestions(visitItems, findingItems),
+    [visitItems, findingItems],
+  );
+  const matchSummary = useMemo(() => {
+    return {
+      matchedConfidently: 0,
+      needReview: findingItems.filter((finding) =>
+        ["allocation_unclear", "possible_credit"].includes(String(finding.finding_type ?? "")),
+      ).length,
+      unexplainedPayments: findingItems.filter(
+        (finding) => String(finding.finding_type ?? "") === "unexplained_payment",
+      ).length,
+      possibleCredits: findingItems.filter(
+        (finding) => String(finding.finding_type ?? "") === "possible_credit",
+      ).length,
+    };
+  }, [findingItems]);
+  const filteredFindings = useMemo(() => {
+    if (matchFilter === "review") {
+      return findingItems.filter((finding) =>
+        ["allocation_unclear", "possible_credit"].includes(String(finding.finding_type ?? "")),
+      );
+    }
+    if (matchFilter === "credit") {
+      return findingItems.filter((finding) => String(finding.finding_type ?? "") === "possible_credit");
+    }
+    if (matchFilter === "unexplained") {
+      return findingItems.filter(
+        (finding) => String(finding.finding_type ?? "") === "unexplained_payment",
+      );
+    }
+    return findingItems;
+  }, [findingItems, matchFilter]);
+  const selectedFinding =
+    filteredFindings.find((finding) => String(finding.id) === selectedFindingId) ?? filteredFindings[0] ?? null;
 
   function isSupportedUpload(file: File) {
     const fileName = file.name.toLowerCase();
@@ -419,7 +542,7 @@ export function DashboardShell({
 
     const supportedFiles = Array.from(files).filter(isSupportedUpload).slice(0, MAX_FILES_PER_UPLOAD);
     if (!supportedFiles.length) {
-      setPastAuditStatus("Unsupported file type. Use CSV, PDF, XLS, XLSX, PNG, or JPG.");
+      setPastAuditStatus("Unsupported file type. Use CSV, PDF, XLS, or XLSX.");
       return;
     }
     if (files.length > MAX_FILES_PER_UPLOAD) {
@@ -497,6 +620,82 @@ export function DashboardShell({
       setPastAuditStatus(error instanceof Error ? error.message : "Failed to run audit.");
     } finally {
       setIsRunningAudit(false);
+    }
+  }
+
+  function handleUseSample() {
+    const sample = createSamplePastAuditState();
+    setSelectedUploads({
+      claim: sample.selectedUploads.claim as LocalUpload[],
+      payment: sample.selectedUploads.payment as LocalUpload[],
+    });
+    setFindingItems(sample.findings);
+    setSelectedFindingId(sample.findings[0] ? String(sample.findings[0].id) : null);
+    setPastAuditStatus(sample.status);
+  }
+
+  async function handleAddVisitTracker() {
+    setIsSavingVisit(true);
+    setFutureVisitStatus("Saving visit...");
+
+    try {
+      const payload = buildVisitCreatePayload(futureVisitDraft);
+      const response = await fetch("/api/visits", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const body = (await response.json().catch(() => null)) as { error?: string } | Record<string, unknown> | null;
+      if (!response.ok) {
+        throw new Error((body as { error?: string } | null)?.error ?? "Failed to save visit.");
+      }
+
+      setVisitItems((current) => [body as Record<string, unknown>, ...current]);
+      setFutureVisitDraft(createDefaultFutureVisitDraft());
+      setFutureVisitStatus(
+        payload.claimCheckAfter
+          ? `Visit saved. Claim check scheduled for ${formatVisitDate(payload.claimCheckAfter)}.`
+          : "Visit saved.",
+      );
+    } catch (error) {
+      setFutureVisitStatus(error instanceof Error ? error.message : "Failed to save visit.");
+    } finally {
+      setIsSavingVisit(false);
+    }
+  }
+
+  async function handleAddManualFallback() {
+    setIsSavingManualFallback(true);
+    setPastAuditStatus("Saving manual payment...");
+
+    try {
+      const response = await fetch("/api/payments/manual", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(manualFallbackDraft),
+      });
+
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        throw new Error(body?.error ?? "Failed to save manual payment.");
+      }
+
+      setManualFallbackDraft({
+        paymentSource: "Receipt",
+        providerName: "",
+        paymentDate: "",
+        amount: "",
+      });
+      setPastAuditStatus("Manual payment added. Run audit again to match it against claims.");
+    } catch (error) {
+      setPastAuditStatus(error instanceof Error ? error.message : "Failed to save manual payment.");
+    } finally {
+      setIsSavingManualFallback(false);
     }
   }
 
@@ -1258,7 +1457,7 @@ export function DashboardShell({
                     >
                       {isRunningAudit ? "Running..." : "Run audit"}
                     </button>
-                    <button
+                        <button
                       type="button"
                       style={{
                         borderRadius: 18,
@@ -1270,6 +1469,7 @@ export function DashboardShell({
                         fontSize: 16,
                         cursor: "pointer",
                       }}
+                      onClick={handleUseSample}
                     >
                       Use sample
                     </button>
@@ -1304,21 +1504,102 @@ export function DashboardShell({
                         gap: 12,
                       }}
                     >
-                      {["Payment / receipt", "Provider or clinic", "mm/dd/yyyy", "Amount", "Add row"].map((label, index) => (
-                        <div
-                          key={label}
-                          style={{
-                            borderRadius: 16,
-                            border: "1px solid #dbe4ef",
-                            background: index === 4 ? "#ffffff" : "#ffffff",
-                            padding: "16px 18px",
-                            color: index === 4 ? "#152235" : "#7a8599",
-                            fontWeight: index === 4 ? 700 : 600,
-                          }}
-                        >
-                          {label}
-                        </div>
-                      ))}
+                      <select
+                        value={manualFallbackDraft.paymentSource}
+                        onChange={(event) =>
+                          setManualFallbackDraft((current) => ({
+                            ...current,
+                            paymentSource: event.target.value,
+                          }))
+                        }
+                        style={{
+                          borderRadius: 16,
+                          border: "1px solid #dbe4ef",
+                          background: "#ffffff",
+                          padding: "16px 18px",
+                          color: "#152235",
+                          fontWeight: 600,
+                          fontSize: 15,
+                        }}
+                      >
+                        <option value="Receipt">Payment / receipt</option>
+                        <option value="Provider statement">Provider statement</option>
+                        <option value="Card statement">Card statement</option>
+                      </select>
+                      <input
+                        value={manualFallbackDraft.providerName}
+                        onChange={(event) =>
+                          setManualFallbackDraft((current) => ({
+                            ...current,
+                            providerName: event.target.value,
+                          }))
+                        }
+                        placeholder="Provider or clinic"
+                        style={{
+                          borderRadius: 16,
+                          border: "1px solid #dbe4ef",
+                          background: "#ffffff",
+                          padding: "16px 18px",
+                          color: "#152235",
+                          fontWeight: 500,
+                          fontSize: 15,
+                        }}
+                      />
+                      <input
+                        type="date"
+                        value={manualFallbackDraft.paymentDate}
+                        onChange={(event) =>
+                          setManualFallbackDraft((current) => ({
+                            ...current,
+                            paymentDate: event.target.value,
+                          }))
+                        }
+                        style={{
+                          borderRadius: 16,
+                          border: "1px solid #dbe4ef",
+                          background: "#ffffff",
+                          padding: "16px 18px",
+                          color: manualFallbackDraft.paymentDate ? "#152235" : "#7a8599",
+                          fontWeight: 600,
+                          fontSize: 15,
+                        }}
+                      />
+                      <input
+                        inputMode="decimal"
+                        value={manualFallbackDraft.amount}
+                        onChange={(event) =>
+                          setManualFallbackDraft((current) => ({
+                            ...current,
+                            amount: event.target.value,
+                          }))
+                        }
+                        placeholder="Amount"
+                        style={{
+                          borderRadius: 16,
+                          border: "1px solid #dbe4ef",
+                          background: "#ffffff",
+                          padding: "16px 18px",
+                          color: "#152235",
+                          fontWeight: 600,
+                          fontSize: 15,
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddManualFallback}
+                        style={{
+                          borderRadius: 16,
+                          border: "1px solid #dbe4ef",
+                          background: "#ffffff",
+                          padding: "16px 18px",
+                          color: "#152235",
+                          fontWeight: 700,
+                          fontSize: 15,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {isSavingManualFallback ? "Saving..." : "Add row"}
+                      </button>
                     </div>
                   </div>
                 </div>,
@@ -1345,8 +1626,8 @@ export function DashboardShell({
                         {" "}credits found
                       </h3>
                       <p style={{ margin: 0, color: "#617086", fontSize: 16 }}>
-                        {findings.length
-                          ? `${findings.length} review item${findings.length === 1 ? "" : "s"} currently tracked.`
+                        {findingItems.length
+                          ? `${findingItems.length} review item${findingItems.length === 1 ? "" : "s"} currently tracked.`
                           : "Run an audit to see possible provider credits."}
                       </p>
                     </div>
@@ -1372,81 +1653,294 @@ export function DashboardShell({
                     </Link>
                   </div>
 
-                  <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 18 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14 }}>
+                    {[
+                      ["Matched confidently", matchSummary.matchedConfidently, "#0f766d", "#def4f1"],
+                      ["Need review", matchSummary.needReview, "#b56411", "#fff1df"],
+                      ["Unexplained payments", matchSummary.unexplainedPayments, "#64748b", "#f3f6fb"],
+                      ["Possible credits", matchSummary.possibleCredits, "#0f766d", "#e8fbf6"],
+                    ].map(([label, value, color, background]) => (
+                      <div
+                        key={String(label)}
+                        style={{
+                          borderRadius: 18,
+                          border: "1px solid #dbe4ef",
+                          background: "#ffffff",
+                          padding: 18,
+                          display: "grid",
+                          gap: 8,
+                        }}
+                      >
+                        <span style={{ color: "#617086", fontSize: 13, fontWeight: 700 }}>{label}</span>
+                        <strong style={{ fontSize: 30, lineHeight: 1, color: String(color) }}>{value}</strong>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            width: "fit-content",
+                            padding: "6px 10px",
+                            borderRadius: 999,
+                            background: String(background),
+                            color: String(color),
+                            fontSize: 12,
+                            fontWeight: 700,
+                          }}
+                        >
+                          current run
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {[
+                      ["all", "All"],
+                      ["review", "Need review"],
+                      ["credit", "Possible credits"],
+                      ["unexplained", "Unexplained payments"],
+                    ].map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setMatchFilter(key as MatchFilterKey)}
+                        style={{
+                          borderRadius: 999,
+                          border: matchFilter === key ? "1px solid #117a72" : "1px solid #dbe4ef",
+                          background: matchFilter === key ? "#def4f1" : "#ffffff",
+                          color: matchFilter === key ? "#0f766d" : "#617086",
+                          padding: "10px 14px",
+                          fontSize: 13,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 18, alignItems: "start" }}>
                     {surface(
                       <div style={{ padding: 22, display: "grid", gap: 14 }}>
-                        <h3 style={{ margin: 0, fontSize: 22 }}>Audit findings</h3>
-                        {findings.length ? (
-                          findings.map((finding) => (
-                            <div
-                              key={String(finding.id)}
-                              style={{
-                                border: "1px solid #e3ebf4",
-                                borderRadius: 18,
-                                padding: 18,
-                                display: "grid",
-                                gap: 8,
-                              }}
-                            >
-                              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                                <strong style={{ fontSize: 18 }}>
-                                  {String(
-                                    finding.provider_name ??
-                                      finding.providerName ??
-                                      finding.title ??
-                                      "Provider under review",
-                                  )}
-                                </strong>
-                                {pill(
-                                  String(finding.finding_type ?? "Review item").replace(/_/g, " "),
-                                  "amber",
-                                )}
-                              </div>
-                              <span style={{ color: "#617086", lineHeight: 1.5 }}>
-                                {String(finding.summary ?? finding.title ?? "Review this item and confirm whether action is needed.")}
-                              </span>
-                            </div>
-                          ))
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                          <h3 style={{ margin: 0, fontSize: 22 }}>Review queue</h3>
+                          {pill(
+                            `${filteredFindings.length} item${filteredFindings.length === 1 ? "" : "s"}`,
+                            filteredFindings.length ? "amber" : "slate",
+                          )}
+                        </div>
+                        {filteredFindings.length ? (
+                          filteredFindings.map((finding) => {
+                            const details = findingDetails(finding);
+                            const findingType = String(finding.finding_type ?? "");
+                            const isSelected = selectedFinding && String(selectedFinding.id) === String(finding.id);
+
+                            return (
+                              <button
+                                key={String(finding.id)}
+                                type="button"
+                                onClick={() => setSelectedFindingId(String(finding.id))}
+                                style={{
+                                  textAlign: "left",
+                                  border: isSelected ? "1px solid #7ccfc6" : "1px solid #e3ebf4",
+                                  borderRadius: 18,
+                                  padding: 18,
+                                  display: "grid",
+                                  gap: 10,
+                                  background: isSelected ? "#f7fffd" : "#ffffff",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
+                                  <div style={{ display: "grid", gap: 6 }}>
+                                    <strong style={{ fontSize: 18, color: "#152235" }}>
+                                      {detailText(
+                                        details.provider_name ?? finding.provider_name ?? finding.title,
+                                        "Provider under review",
+                                      )}
+                                    </strong>
+                                    <span style={{ color: "#617086", fontSize: 14 }}>
+                                      Visit {detailText(details.service_date, "date not recorded")}
+                                    </span>
+                                  </div>
+                                  {pill(findingStatusLabel(finding), findingStatusTone(findingType))}
+                                </div>
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+                                  <div style={{ display: "grid", gap: 4 }}>
+                                    <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 700 }}>EOB says you owe</span>
+                                    <strong style={{ fontSize: 16 }}>{detailText(details.responsibility_amount, "--")}</strong>
+                                  </div>
+                                  <div style={{ display: "grid", gap: 4 }}>
+                                    <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 700 }}>Paid amount found</span>
+                                    <strong style={{ fontSize: 16 }}>{detailText(details.paid_amount, "--")}</strong>
+                                  </div>
+                                  <div style={{ display: "grid", gap: 4 }}>
+                                    <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 700 }}>System read</span>
+                                    <strong style={{ fontSize: 16 }}>{findingStatusLabel(finding)}</strong>
+                                  </div>
+                                </div>
+                                <span style={{ color: "#617086", lineHeight: 1.5 }}>
+                                  {String(finding.summary ?? "Review this item and confirm whether action is needed.")}
+                                </span>
+                              </button>
+                            );
+                          })
                         ) : (
-                          <div style={{ color: "#617086" }}>No findings yet.</div>
+                          <div style={{ color: "#617086" }}>No findings in this filter yet.</div>
                         )}
                       </div>,
                     )}
 
                     {surface(
-                      <div style={{ padding: 22, display: "grid", gap: 14 }}>
-                        <p
-                          style={{
-                            margin: 0,
-                            color: "#0b7a75",
-                            fontSize: 13,
-                            fontWeight: 800,
-                            letterSpacing: "0.14em",
-                            textTransform: "uppercase",
-                          }}
-                        >
-                          Selected provider
-                        </p>
-                        <h3 style={{ margin: 0, fontSize: 22 }}>Credit timeline</h3>
-                        {findings.length ? (
-                          findings.slice(0, 3).map((finding) => (
-                            <div
-                              key={String(finding.id)}
-                              style={{
-                                paddingLeft: 16,
-                                borderLeft: "2px solid #f0b66f",
-                                display: "grid",
-                                gap: 6,
-                              }}
-                            >
-                              <strong>{String(finding.title ?? "Review item")}</strong>
-                              <span style={{ color: "#617086", lineHeight: 1.45 }}>
-                                {String(finding.finding_type ?? "allocation_unclear").replace(/_/g, " ")}
-                              </span>
+                      <div style={{ padding: 22, display: "grid", gap: 16 }}>
+                        <div style={{ display: "grid", gap: 6 }}>
+                          <p
+                            style={{
+                              margin: 0,
+                              color: "#0b7a75",
+                              fontSize: 13,
+                              fontWeight: 800,
+                              letterSpacing: "0.14em",
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            Selected visit
+                          </p>
+                          <h3 style={{ margin: 0, fontSize: 22 }}>Match evidence</h3>
+                        </div>
+                        {selectedFinding ? (
+                          <>
+                            <div style={{ display: "grid", gap: 12 }}>
+                              <div style={{ borderRadius: 18, border: "1px solid #e3ebf4", padding: 16, display: "grid", gap: 8 }}>
+                                <strong style={{ fontSize: 16 }}>Claim / EOB</strong>
+                                <span style={{ color: "#617086" }}>
+                                  Provider: {detailText(findingDetails(selectedFinding).provider_name ?? selectedFinding.provider_name)}
+                                </span>
+                                <span style={{ color: "#617086" }}>
+                                  Service date: {detailText(findingDetails(selectedFinding).service_date)}
+                                </span>
+                                <span style={{ color: "#617086" }}>
+                                  Patient responsibility: {detailText(findingDetails(selectedFinding).responsibility_amount)}
+                                </span>
+                              </div>
+
+                              <div style={{ borderRadius: 18, border: "1px solid #e3ebf4", padding: 16, display: "grid", gap: 8 }}>
+                                <strong style={{ fontSize: 16 }}>Payment evidence</strong>
+                                <span style={{ color: "#617086" }}>
+                                  Amount found: {detailText(findingDetails(selectedFinding).paid_amount, "No payment found yet")}
+                                </span>
+                                <span style={{ color: "#617086" }}>
+                                  Payment source: {detailText(findingDetails(selectedFinding).payment_source, "Card / receipt / manual entry pending")}
+                                </span>
+                              </div>
                             </div>
-                          ))
+
+                            <div style={{ borderRadius: 18, border: "1px solid #e3ebf4", padding: 16, display: "grid", gap: 10 }}>
+                              <strong style={{ fontSize: 16 }}>Why we matched this</strong>
+                              <div style={{ display: "grid", gap: 8 }}>
+                                {findingEvidenceBullets(selectedFinding).map((bullet) => (
+                                  <span key={bullet} style={{ color: "#617086", lineHeight: 1.45 }}>
+                                    {bullet}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+
+                            {candidatePayments(selectedFinding).length > 0 ? (
+                              <div style={{ borderRadius: 18, border: "1px solid #e3ebf4", padding: 16, display: "grid", gap: 10 }}>
+                                <strong style={{ fontSize: 16 }}>Closest payment candidates</strong>
+                                <div style={{ display: "grid", gap: 10 }}>
+                                  {candidatePayments(selectedFinding).map((candidate) => (
+                                    <div
+                                      key={String(candidate.payment_id ?? candidate.provider_name ?? candidate.amount)}
+                                      style={{
+                                        borderRadius: 14,
+                                        background: "#fbfdff",
+                                        border: "1px solid #e8eef6",
+                                        padding: 14,
+                                        display: "grid",
+                                        gap: 6,
+                                      }}
+                                    >
+                                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                                        <strong style={{ fontSize: 15, color: "#152235" }}>
+                                          {detailText(candidate.provider_name, "Provider candidate")}
+                                        </strong>
+                                        <span
+                                          style={{
+                                            display: "inline-flex",
+                                            padding: "6px 10px",
+                                            borderRadius: 999,
+                                            background: "#fff1df",
+                                            color: "#b56411",
+                                            fontSize: 12,
+                                            fontWeight: 700,
+                                          }}
+                                        >
+                                          {detailText(candidate.match_hint, "Candidate")}
+                                        </span>
+                                      </div>
+                                      <span style={{ color: "#617086" }}>
+                                        Paid {detailText(candidate.amount)} on {detailText(candidate.payment_date, "date unknown")}
+                                      </span>
+                                      <span style={{ color: "#617086" }}>
+                                        Source: {detailText(candidate.payment_source, "Card / receipt line item")}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+
+                            <div style={{ display: "grid", gap: 10 }}>
+                              <button
+                                type="button"
+                                style={{
+                                  borderRadius: 16,
+                                  border: "none",
+                                  background: "#152235",
+                                  color: "#ffffff",
+                                  padding: "14px 16px",
+                                  fontSize: 15,
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Confirm match
+                              </button>
+                              <button
+                                type="button"
+                                style={{
+                                  borderRadius: 16,
+                                  border: "1px solid #dbe4ef",
+                                  background: "#ffffff",
+                                  color: "#152235",
+                                  padding: "14px 16px",
+                                  fontSize: 15,
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Not the same visit
+                              </button>
+                              <button
+                                type="button"
+                                style={{
+                                  borderRadius: 16,
+                                  border: "1px solid #dbe4ef",
+                                  background: "#f8fbff",
+                                  color: "#152235",
+                                  padding: "14px 16px",
+                                  fontSize: 15,
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Add receipt or payment
+                              </button>
+                            </div>
+                          </>
                         ) : (
-                          <div style={{ color: "#617086" }}>No provider selected yet.</div>
+                          <div style={{ color: "#617086" }}>Select a finding to review its evidence.</div>
                         )}
                       </div>,
                     )}
@@ -1480,9 +1974,11 @@ export function DashboardShell({
                       {futureFieldLabel("Provider or clinic")}
                       <input
                         value={futureVisitDraft.provider}
+                        list="provider-suggestions"
                         onChange={(event) =>
                           setFutureVisitDraft((current) => ({ ...current, provider: event.target.value }))
                         }
+                        placeholder="Start typing a clinic or provider name"
                         style={{
                           height: 48,
                           borderRadius: 14,
@@ -1494,6 +1990,11 @@ export function DashboardShell({
                           fontWeight: 500,
                         }}
                       />
+                      <datalist id="provider-suggestions">
+                        {providerSuggestions.map((provider) => (
+                          <option key={provider} value={provider} />
+                        ))}
+                      </datalist>
                     </label>
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -1515,6 +2016,7 @@ export function DashboardShell({
                             fontWeight: 600,
                           }}
                         >
+                          <option value="">Select visit type</option>
                           {["Dental", "Medical", "Vision", "Lab", "Therapy"].map((option) => (
                             <option key={option} value={option}>
                               {option}
@@ -1564,6 +2066,7 @@ export function DashboardShell({
                             fontSize: 15,
                             fontWeight: 600,
                           }}
+                          placeholder="0.00"
                         />
                       </label>
 
@@ -1585,6 +2088,7 @@ export function DashboardShell({
                             fontWeight: 600,
                           }}
                         >
+                          <option value="">Select payment method</option>
                           {["Personal card", "HSA card", "FSA card", "Cash", "Check"].map((option) => (
                             <option key={option} value={option}>
                               {option}
@@ -1704,8 +2208,9 @@ export function DashboardShell({
                     </label>
                   </div>
 
-                  <button
+                    <button
                     type="button"
+                    onClick={handleAddVisitTracker}
                     style={{
                       borderRadius: 14,
                       border: "none",
@@ -1719,8 +2224,11 @@ export function DashboardShell({
                       minWidth: 180,
                     }}
                   >
-                    Add visit tracker
+                    {isSavingVisit ? "Saving..." : "Add visit tracker"}
                   </button>
+                  {futureVisitStatus ? (
+                    <span style={{ color: "#617086", fontSize: 14 }}>{futureVisitStatus}</span>
+                  ) : null}
                 </div>,
               )}
 
@@ -1728,11 +2236,11 @@ export function DashboardShell({
                 <div style={{ padding: 22, display: "grid", gap: 14 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
                     <h3 style={{ margin: 0, fontSize: 20 }}>Tracked visits</h3>
-                    {pill(`${visits.length} visit${visits.length === 1 ? "" : "s"}`, visits.length ? "teal" : "slate")}
+                    {pill(`${visitItems.length} visit${visitItems.length === 1 ? "" : "s"}`, visitItems.length ? "teal" : "slate")}
                   </div>
 
-                  {visits.length ? (
-                    visits.map((visit) => (
+                  {visitItems.length ? (
+                    visitItems.map((visit) => (
                       <div
                         key={String(visit.id)}
                         style={{

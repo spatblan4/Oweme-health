@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { requireRequestUserId } from "@/lib/auth/request-user";
-import { listFindings } from "@/lib/findings/repository";
+import { createManualPayment } from "@/lib/payments/repository";
 
-export async function GET(request: Request) {
+export async function POST(request: Request) {
   try {
     const userId = await requireRequestUserId(request);
-    const result = await listFindings(userId);
+    const body = await request.json();
+    const result = await createManualPayment(userId, body);
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error";
