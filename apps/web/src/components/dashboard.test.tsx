@@ -2,7 +2,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { buildCreditReviewDraft, DashboardShell } from "./dashboard-shell";
+import { buildConfirmMatchPayload, buildCreditReviewDraft, DashboardShell } from "./dashboard-shell";
 
 describe("DashboardShell", () => {
   it("builds editable email and call communication drafts with combined visit evidence", () => {
@@ -160,6 +160,134 @@ describe("DashboardShell", () => {
     expect(html).toContain("Paid 142.00 on 2026-05-13");
     expect(html).toContain("Payment method: Apple Card");
     expect(html).not.toContain("Chase card");
+  });
+
+  it("shows confirmed payment total and possible credit on the left card", () => {
+    const html = renderToStaticMarkup(
+      <DashboardShell
+        jobs={[]}
+        visits={[]}
+        findings={[
+          {
+            id: "stone-creek-confirmed",
+            provider_name: "Stone Creek Village De",
+            finding_type: "allocation_unclear",
+            status: "resolved",
+            title: "Stone Creek Village De",
+            details: {
+              provider_name: "Stone Creek Village De",
+              service_date: "2026-05-13",
+              responsibility_amount: "12.40",
+              confirmed_payment_ids: ["payment-133", "payment-142"],
+              confirmed_paid_amount: "275.00",
+              confirmed_responsibility_amount: "12.40",
+              confirmed_credit_amount: "262.60",
+              confirmed_payments: [
+                {
+                  payment_id: "payment-133",
+                  provider_name: "Stone Creek Village De",
+                  payment_date: "2026-05-13",
+                  amount: "133.00",
+                  payment_source_label: "Apple Card",
+                },
+                {
+                  payment_id: "payment-142",
+                  provider_name: "Stone Creek Village De",
+                  payment_date: "2026-05-13",
+                  amount: "142.00",
+                  payment_source_label: "Apple Card",
+                },
+              ],
+              candidate_payments: [
+                {
+                  payment_id: "payment-133",
+                  provider_name: "Stone Creek Village De",
+                  payment_date: "2026-05-13",
+                  amount: "133.00",
+                  payment_source_label: "Apple Card",
+                  match_hint: "Provider conflict",
+                },
+                {
+                  payment_id: "payment-142",
+                  provider_name: "Stone Creek Village De",
+                  payment_date: "2026-05-13",
+                  amount: "142.00",
+                  payment_source_label: "Apple Card",
+                  match_hint: "Provider conflict",
+                },
+              ],
+            },
+          },
+        ]}
+        initialView="past"
+      />,
+    );
+
+    const reviewCard =
+      html.match(/<button type="button" data-testid="review-finding-stone-creek-confirmed"[\s\S]*?<\/button>/)?.[0] ?? "";
+
+    expect(reviewCard).toContain("Confirmed");
+    expect(reviewCard).toContain("Confirmed payments");
+    expect(reviewCard).toContain("275.00");
+    expect(reviewCard).toContain("Apple Card");
+    expect(reviewCard).toContain("$262.60");
+    expect(reviewCard).not.toContain("Needs review");
+    expect(reviewCard).not.toContain("2 possible");
+    expect(html).toContain("Revise selected payments");
+  });
+
+  it("renders candidate payment checkboxes selected by default with a selected-total summary", () => {
+    const html = renderToStaticMarkup(
+      <DashboardShell
+        jobs={[]}
+        visits={[]}
+        findings={[
+          {
+            id: "stone-creek-review",
+            provider_name: "Stone Creek Village De",
+            finding_type: "allocation_unclear",
+            status: "open",
+            title: "Stone Creek Village De",
+            details: {
+              provider_name: "Stone Creek Village De",
+              service_date: "2026-05-13",
+              responsibility_amount: "12.40",
+              candidate_payments: [
+                {
+                  payment_id: "payment-133",
+                  provider_name: "Stone Creek Village De",
+                  payment_date: "2026-05-13",
+                  amount: "133.00",
+                  payment_source_label: "Apple Card",
+                },
+                {
+                  payment_id: "payment-142",
+                  provider_name: "Stone Creek Village De",
+                  payment_date: "2026-05-13",
+                  amount: "142.00",
+                  payment_source_label: "Apple Card",
+                },
+              ],
+            },
+          },
+        ]}
+        initialView="past"
+      />,
+    );
+
+    expect(html).toContain('type="checkbox"');
+    expect(html.match(/checked=""/g)?.length).toBe(2);
+    expect(html).toContain("Selected payments: $275.00 across 2 payments");
+    expect(html).toContain("EOB responsibility: $12.40");
+    expect(html).toContain("Possible credit: $262.60");
+    expect(html).toContain("Confirm selected payments match");
+  });
+
+  it("builds confirm-match payload with selected candidate payment IDs", () => {
+    expect(buildConfirmMatchPayload(["payment-133", "payment-142"])).toEqual({
+      action: "confirm_match",
+      paymentIds: ["payment-133", "payment-142"],
+    });
   });
 
   it("renders the prototype-aligned navigation and primary views", () => {

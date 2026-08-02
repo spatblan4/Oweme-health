@@ -20,6 +20,7 @@ type FindingActionDeps = {
 
 const findingActionSchema = z.object({
   action: z.enum(["confirm_match", "not_same_visit", "add_receipt_or_payment", "request_credit_refund"]),
+  paymentIds: z.array(z.string()).optional(),
 });
 
 type FindingActionInput = z.infer<typeof findingActionSchema>;
@@ -210,6 +211,89 @@ function findingActionDetails(
   }
 }
 
+function recordDetails(record: FindingRecord) {
+  const raw = record.details;
+  return raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : {};
+}
+
+function candidatePaymentsFromDetails(details: Record<string, unknown>) {
+  const raw = details.candidate_payments;
+  return Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+}
+
+function formatMoney(value: number) {
+  return value.toFixed(2);
+}
+
+function parseMoney(value: unknown) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function confirmationFromPaymentIds(existing: FindingRecord, paymentIds: string[]) {
+  const details = recordDetails(existing);
+  const candidates = candidatePaymentsFromDetails(details);
+  if (!candidates.length) {
+    return null;
+  }
+
+  const selectedIds = Array.from(new Set(paymentIds.filter(Boolean)));
+  if (!selectedIds.length) {
+    throw new Error("Select at least one payment to confirm");
+  }
+
+  const candidateById = new Map(
+    candidates
+      .filter((candidate) => candidate.payment_id)
+      .map((candidate) => [String(candidate.payment_id), candidate]),
+  );
+  const selectedPayments = selectedIds.map((id) => {
+    const candidate = candidateById.get(id);
+    if (!candidate) {
+      throw new Error("Selected payment is not a candidate for this finding");
+    }
+    return candidate;
+  });
+
+  const selectedTotal = selectedPayments.reduce((sum, payment) => sum + parseMoney(payment.amount), 0);
+  if (selectedTotal <= 0) {
+    throw new Error("Selected payments need a valid amount");
+  }
+
+  const responsibility = parseMoney(details.responsibility_amount);
+  const credit = Math.max(0, selectedTotal - responsibility);
+  const previousValue =
+    details.confirmed_payment_ids || details.confirmed_paid_amount || details.confirmed_credit_amount
+      ? {
+          payment_ids: details.confirmed_payment_ids ?? [],
+          confirmed_paid_amount: details.confirmed_paid_amount ?? null,
+          confirmed_credit_amount: details.confirmed_credit_amount ?? null,
+        }
+      : null;
+
+  return {
+    previousValue,
+    detailsPatch: {
+      ...details,
+      confirmed_payment_ids: selectedIds,
+      confirmed_payments: selectedPayments,
+      confirmed_paid_amount: formatMoney(selectedTotal),
+      confirmed_responsibility_amount: formatMoney(responsibility),
+      confirmed_credit_amount: formatMoney(credit),
+      confirmation_source: "Confirmed by you",
+    },
+    auditValue: {
+      payment_ids: selectedIds,
+      confirmed_payments: selectedPayments,
+      confirmed_paid_amount: formatMoney(selectedTotal),
+      confirmed_responsibility_amount: formatMoney(responsibility),
+      confirmed_credit_amount: formatMoney(credit),
+    },
+  };
+}
+
 export async function applyFindingAction(
   userId: string,
   findingId: string,
@@ -233,6 +317,10 @@ export async function applyFindingAction(
 
   const currentStatus = typeof existing.status === "string" ? existing.status : undefined;
   const actionDetails = findingActionDetails(parsed.data.action, currentStatus);
+  const confirmation =
+    parsed.data.action === "confirm_match"
+      ? confirmationFromPaymentIds(existing, parsed.data.paymentIds ?? [])
+      : null;
   const timestamp = deps.now();
   const patch: Record<string, unknown> = {
     updated_at: timestamp,
@@ -240,6 +328,9 @@ export async function applyFindingAction(
 
   if (actionDetails.status) {
     patch.status = actionDetails.status;
+  }
+  if (confirmation) {
+    patch.details = confirmation.detailsPatch;
   }
 
   const updated = await deps.patchOwnedFinding(userId, findingId, patch);
@@ -252,9 +343,9 @@ export async function applyFindingAction(
     user_id: userId,
     target_type: "finding",
     target_id: findingId,
-    field_name: actionDetails.fieldName,
-    previous_value: actionDetails.previousValue,
-    new_value: actionDetails.newValue,
+    field_name: confirmation ? "confirmed_payments" : actionDetails.fieldName,
+    previous_value: confirmation ? confirmation.previousValue : actionDetails.previousValue,
+    new_value: confirmation ? confirmation.auditValue : actionDetails.newValue,
     reason: actionDetails.reason,
     created_at: timestamp,
   });

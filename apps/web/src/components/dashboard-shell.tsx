@@ -297,6 +297,58 @@ function candidatePayments(finding: Record<string, unknown>) {
   return Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [];
 }
 
+function candidatePaymentId(candidate: Record<string, unknown>) {
+  return typeof candidate.payment_id === "string" ? candidate.payment_id : "";
+}
+
+function validCandidatePaymentIds(finding: Record<string, unknown>) {
+  return candidatePayments(finding).map(candidatePaymentId).filter(Boolean);
+}
+
+function confirmedPaymentIds(finding: Record<string, unknown>) {
+  const raw = findingDetails(finding).confirmed_payment_ids;
+  return Array.isArray(raw) ? raw.map(String).filter(Boolean) : [];
+}
+
+function initialSelectedPaymentIds(finding: Record<string, unknown>) {
+  const confirmed = confirmedPaymentIds(finding);
+  return confirmed.length ? confirmed : validCandidatePaymentIds(finding);
+}
+
+function selectedCandidatePayments(finding: Record<string, unknown>, selectedIds: string[]) {
+  const selected = new Set(selectedIds);
+  return candidatePayments(finding).filter((candidate) => selected.has(candidatePaymentId(candidate)));
+}
+
+function selectedPaymentSummary(finding: Record<string, unknown>, selectedIds: string[]) {
+  const payments = selectedCandidatePayments(finding, selectedIds);
+  const selectedTotal = payments.reduce((sum, payment) => sum + parseAmount(payment.amount), 0);
+  const responsibility = parseAmount(findingDetails(finding).responsibility_amount);
+  return {
+    count: payments.length,
+    selectedTotal,
+    responsibility,
+    credit: Math.max(0, selectedTotal - responsibility),
+  };
+}
+
+function confirmedPayments(finding: Record<string, unknown>) {
+  const raw = findingDetails(finding).confirmed_payments;
+  return Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [];
+}
+
+function hasConfirmedPayments(finding: Record<string, unknown>) {
+  return confirmedPaymentIds(finding).length > 0 && hasAmount(findingDetails(finding).confirmed_paid_amount);
+}
+
+function confirmedPaidAmount(finding: Record<string, unknown>) {
+  return parseAmount(findingDetails(finding).confirmed_paid_amount);
+}
+
+function confirmedCreditAmount(finding: Record<string, unknown>) {
+  return parseAmount(findingDetails(finding).confirmed_credit_amount);
+}
+
 function candidatePaymentSourceText(candidate: Record<string, unknown>, fallback = "Card / receipt line item") {
   return paymentMethodText(candidate.payment_source_label ?? candidate.payment_source, fallback);
 }
@@ -336,6 +388,9 @@ function candidatePotentialCredit(
 
 function findingStatusLabel(finding: Record<string, unknown>) {
   const findingType = String(finding.finding_type ?? "");
+  if (hasConfirmedPayments(finding)) {
+    return "Confirmed";
+  }
   if (findingType === "possible_credit") {
     return "Possible credit";
   }
@@ -398,6 +453,13 @@ function findingCardSummary(finding: Record<string, unknown>) {
 }
 
 type CreditReviewMode = "combined" | "separate";
+
+export function buildConfirmMatchPayload(paymentIds: string[]) {
+  return {
+    action: "confirm_match" as const,
+    paymentIds,
+  };
+}
 
 export type CreditReviewDraft = {
   mode: CreditReviewMode;
@@ -843,6 +905,7 @@ export function DashboardShell({
   );
   const [findingActionStatus, setFindingActionStatus] = useState("");
   const [isSavingFindingAction, setIsSavingFindingAction] = useState(false);
+  const [selectedCandidatePaymentIdsByFinding, setSelectedCandidatePaymentIdsByFinding] = useState<Record<string, string[]>>({});
   const [creditReviewMode, setCreditReviewMode] = useState<CreditReviewMode>("combined");
   const [creditReviewDraft, setCreditReviewDraft] = useState<CreditReviewDraft | null>(null);
   const [actionCenterStatus, setActionCenterStatus] = useState("");
@@ -886,6 +949,16 @@ export function DashboardShell({
     selectedFindingId
       ? filteredFindings.find((finding) => String(finding.id) === selectedFindingId) ?? null
       : filteredFindings[0] ?? null;
+  const selectedFindingKey = selectedFinding ? String(selectedFinding.id) : "";
+  const currentSelectedCandidatePaymentIds =
+    selectedFinding && Object.prototype.hasOwnProperty.call(selectedCandidatePaymentIdsByFinding, selectedFindingKey)
+      ? selectedCandidatePaymentIdsByFinding[selectedFindingKey] ?? []
+      : selectedFinding
+        ? initialSelectedPaymentIds(selectedFinding)
+        : [];
+  const currentSelectedPaymentSummary = selectedFinding
+    ? selectedPaymentSummary(selectedFinding, currentSelectedCandidatePaymentIds)
+    : null;
   const selectedProviderFindings = useMemo(() => {
     if (!selectedFinding) {
       return [];
@@ -909,6 +982,17 @@ export function DashboardShell({
     if (typeof window !== "undefined") {
       window.history.pushState({}, "", viewHref(view));
     }
+  }
+
+  function updateSelectedCandidatePaymentIds(updater: (current: string[]) => string[]) {
+    if (!selectedFinding) {
+      return;
+    }
+    const findingKey = String(selectedFinding.id);
+    setSelectedCandidatePaymentIdsByFinding((current) => ({
+      ...current,
+      [findingKey]: updater(current[findingKey] ?? initialSelectedPaymentIds(selectedFinding)),
+    }));
   }
 
   function handleViewLinkClick(event: React.MouseEvent<HTMLAnchorElement>, view: ViewKey) {
@@ -1281,6 +1365,7 @@ export function DashboardShell({
   async function handleFindingAction(
     action: "confirm_match" | "not_same_visit" | "add_receipt_or_payment" | "request_credit_refund",
     targetFinding = selectedFinding,
+    options?: { paymentIds?: string[] },
   ) {
     if (!targetFinding) {
       setFindingActionStatus("Select a finding first.");
@@ -1324,7 +1409,11 @@ export function DashboardShell({
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify(
+          action === "confirm_match" && options?.paymentIds
+            ? buildConfirmMatchPayload(options.paymentIds)
+            : { action },
+        ),
       });
 
       const payload = (await response.json().catch(() => null)) as {
@@ -2151,8 +2240,15 @@ export function DashboardShell({
                             const isUnassignedPayment = findingType === "unassigned_medical_payment";
                             const candidates = candidatePayments(finding);
                             const primaryCandidate = candidates[0];
+                            const isConfirmed = hasConfirmedPayments(finding);
+                            const displayPaymentRows = isConfirmed ? confirmedPayments(finding) : candidates;
                             const hasMultipleCandidates = candidates.length > 1;
-                            const creditAmount = parseAmount(details.credit_amount);
+                            const creditAmount = isConfirmed
+                              ? confirmedCreditAmount(finding)
+                              : parseAmount(details.credit_amount);
+                            const paidValue = isConfirmed
+                              ? confirmedPaidAmount(finding).toFixed(2)
+                              : detailText(details.paid_amount ?? primaryCandidate?.amount, "--");
 
                             return (
                               <button
@@ -2224,6 +2320,8 @@ export function DashboardShell({
                                     <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 700 }}>
                                       {isUnassignedPayment
                                         ? "You paid"
+                                        : isConfirmed
+                                          ? "Confirmed payments"
                                         : hasMultipleCandidates
                                           ? "Candidate payments"
                                           : primaryCandidate && !details.paid_amount
@@ -2231,9 +2329,11 @@ export function DashboardShell({
                                           : "You paid"}
                                     </span>
                                     <strong style={{ fontSize: 16 }}>
-                                      {hasMultipleCandidates
+                                      {isConfirmed
+                                        ? paidValue
+                                        : hasMultipleCandidates
                                         ? `${candidates.length} possible`
-                                        : detailText(details.paid_amount ?? primaryCandidate?.amount, "--")}
+                                        : paidValue}
                                     </strong>
                                   </div>
                                   <div style={{ display: "grid", gap: 4 }}>
@@ -2241,8 +2341,10 @@ export function DashboardShell({
                                       Payment method
                                     </span>
                                     <strong style={{ fontSize: 16 }}>
-                                      {hasMultipleCandidates
-                                        ? candidatePaymentSourceSummary(candidates)
+                                      {isConfirmed
+                                        ? candidatePaymentSourceSummary(displayPaymentRows)
+                                        : hasMultipleCandidates
+                                        ? candidatePaymentSourceSummary(displayPaymentRows)
                                         : paymentMethodText(details.payment_source ?? primaryCandidate?.payment_source_label ?? primaryCandidate?.payment_source)}
                                     </strong>
                                   </div>
@@ -2823,46 +2925,73 @@ export function DashboardShell({
                                 <strong style={{ fontSize: 16 }}>Payment candidates</strong>
                                 <div style={{ display: "grid", gap: 10 }}>
                                   {candidatePayments(selectedFinding).map((candidate) => {
+                                    const candidateId = candidatePaymentId(candidate);
+                                    const checked = candidateId ? currentSelectedCandidatePaymentIds.includes(candidateId) : false;
                                     return (
-                                      <div
+                                      <label
                                         key={String(candidate.payment_id ?? candidate.provider_name ?? candidate.amount)}
                                         style={{
                                           borderRadius: 14,
-                                          background: "#fbfdff",
-                                          border: "1px solid #e8eef6",
+                                          background: checked ? "#f4fbfa" : "#fbfdff",
+                                          border: checked ? "1px solid #7ccfc6" : "1px solid #e8eef6",
                                           padding: 14,
                                           display: "grid",
-                                          gap: 6,
+                                          gridTemplateColumns: "auto 1fr",
+                                          gap: 10,
+                                          alignItems: "start",
                                         }}
                                       >
-                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                                          <strong style={{ fontSize: 15, color: "#152235" }}>
-                                            {detailText(stripDemoSuffix(candidate.provider_name), "Provider candidate")}
-                                          </strong>
-                                          <span
-                                            style={{
-                                              display: "inline-flex",
-                                              padding: "6px 10px",
-                                              borderRadius: 999,
-                                              background: "#fff1df",
-                                              color: "#b56411",
-                                              fontSize: 12,
-                                              fontWeight: 700,
-                                            }}
-                                          >
-                                            {detailText(candidate.match_hint, "Needs review")}
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          disabled={!candidateId}
+                                          onChange={(event) => {
+                                            updateSelectedCandidatePaymentIds((current) =>
+                                              event.target.checked
+                                                ? Array.from(new Set([...current, candidateId]))
+                                                : current.filter((id) => id !== candidateId),
+                                            );
+                                          }}
+                                          style={{ width: 20, height: 20, marginTop: 2 }}
+                                        />
+                                        <div style={{ display: "grid", gap: 6 }}>
+                                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                                            <strong style={{ fontSize: 15, color: "#152235" }}>
+                                              {detailText(stripDemoSuffix(candidate.provider_name), "Provider candidate")}
+                                            </strong>
+                                            <span
+                                              style={{
+                                                display: "inline-flex",
+                                                padding: "6px 10px",
+                                                borderRadius: 999,
+                                                background: "#fff1df",
+                                                color: "#b56411",
+                                                fontSize: 12,
+                                                fontWeight: 700,
+                                              }}
+                                            >
+                                              {candidateId ? detailText(candidate.match_hint, "Needs review") : "Missing payment ID"}
+                                            </span>
+                                          </div>
+                                          <span style={{ color: "#617086" }}>
+                                            Paid {detailText(candidate.amount)} on {detailText(candidate.payment_date, "date unknown")}
+                                          </span>
+                                          <span style={{ color: "#617086" }}>
+                                            Payment method: {candidatePaymentSourceText(candidate, "Card / receipt line item")}
                                           </span>
                                         </div>
-                                        <span style={{ color: "#617086" }}>
-                                          Paid {detailText(candidate.amount)} on {detailText(candidate.payment_date, "date unknown")}
-                                        </span>
-                                        <span style={{ color: "#617086" }}>
-                                          Payment method: {candidatePaymentSourceText(candidate, "Card / receipt line item")}
-                                        </span>
-                                      </div>
+                                      </label>
                                     );
                                   })}
                                 </div>
+                                {currentSelectedPaymentSummary ? (
+                                  <span style={{ color: "#385b64", lineHeight: 1.45 }}>
+                                    Selected payments: {formatCurrency(currentSelectedPaymentSummary.selectedTotal)} across {currentSelectedPaymentSummary.count} payment{currentSelectedPaymentSummary.count === 1 ? "" : "s"} · EOB responsibility: {formatCurrency(currentSelectedPaymentSummary.responsibility)} · Possible credit: {formatCurrency(currentSelectedPaymentSummary.credit)}
+                                  </span>
+                                ) : null}
+                                {currentSelectedCandidatePaymentIds.length === 0 ? (
+                                  <span style={{ color: "#b56411", fontSize: 13 }}>Select at least one payment to confirm.</span>
+                                ) : null}
                               </div>
                             ) : null}
                               </>
@@ -2894,20 +3023,48 @@ export function DashboardShell({
                               ) : candidatePayments(selectedFinding).length > 0 ? (
                                 <button
                                   type="button"
-                                  onClick={() => handleFindingAction("confirm_match")}
-                                  disabled={isSavingFindingAction}
+                                  onClick={() =>
+                                    handleFindingAction("confirm_match", selectedFinding, {
+                                      paymentIds: currentSelectedCandidatePaymentIds,
+                                    })
+                                  }
+                                  disabled={isSavingFindingAction || currentSelectedCandidatePaymentIds.length === 0}
                                   style={{
                                     borderRadius: 16,
                                     border: "none",
-                                    background: isSavingFindingAction ? "#91a0b5" : "#152235",
+                                    background: isSavingFindingAction || currentSelectedCandidatePaymentIds.length === 0 ? "#91a0b5" : "#152235",
                                     color: "#ffffff",
+                                    padding: "14px 16px",
+                                    fontSize: 15,
+                                    fontWeight: 700,
+                                    cursor: isSavingFindingAction || currentSelectedCandidatePaymentIds.length === 0 ? "default" : "pointer",
+                                  }}
+                                >
+                                  {isSavingFindingAction ? "Saving..." : "Confirm selected payments match"}
+                                </button>
+                              ) : null}
+                              {selectedFinding && hasConfirmedPayments(selectedFinding) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedCandidatePaymentIdsByFinding((current) => ({
+                                      ...current,
+                                      [String(selectedFinding.id)]: initialSelectedPaymentIds(selectedFinding),
+                                    }));
+                                    setFindingActionStatus("Review and revise the selected payments, then save again.");
+                                  }}
+                                  style={{
+                                    borderRadius: 16,
+                                    border: "1px solid #117a72",
+                                    background: "#ffffff",
+                                    color: "#117a72",
                                     padding: "14px 16px",
                                     fontSize: 15,
                                     fontWeight: 700,
                                     cursor: "pointer",
                                   }}
                                 >
-                                  {isSavingFindingAction ? "Saving..." : "Confirm this payment matches"}
+                                  Revise selected payments
                                 </button>
                               ) : null}
                               <button
