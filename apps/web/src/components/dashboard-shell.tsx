@@ -7,21 +7,28 @@ import {
   buildVisitCreatePayload,
   buildProviderSuggestions,
   createDefaultFutureVisitDraft,
+  filterProviderSuggestions,
 } from "@/lib/dashboard/future-visit-draft";
-import { createSamplePastAuditState } from "@/lib/dashboard/sample-audit";
 
 type DashboardShellProps = {
   jobs: Array<Record<string, unknown>>;
   visits: Array<Record<string, unknown>>;
   findings: Array<Record<string, unknown>>;
   initialView?: ViewKey;
+  flashMessage?: string;
+  currentUser?: {
+    id: string;
+    email: string | null;
+    isDevTest: boolean;
+    isDemo?: boolean;
+  };
 };
 
 type ViewKey = "overview" | "past" | "future" | "actions";
 
 const views: Array<{ key: ViewKey; label: string; icon: string }> = [
   { key: "overview", label: "Home", icon: "⌁" },
-  { key: "past", label: "Past Credits", icon: "$" },
+  { key: "past", label: "Past Credits", icon: "▤" },
   { key: "future", label: "Future Visits", icon: "+" },
   { key: "actions", label: "Action Center", icon: "✓" },
 ];
@@ -42,6 +49,10 @@ function parseAmount(value: unknown) {
   return Number.isFinite(num) ? num : 0;
 }
 
+function hasAmount(value: unknown) {
+  return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
+}
+
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -55,7 +66,10 @@ function formatVisitDate(value: unknown) {
     return "Date not recorded";
   }
 
-  const date = new Date(value);
+  const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const date = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
@@ -70,18 +84,20 @@ function formatVisitDate(value: unknown) {
 function sectionHeading(eyebrow: string, title: string, body: string) {
   return (
     <div style={{ display: "grid", gap: 8 }}>
-      <p
-        style={{
-          margin: 0,
-          color: "#0b7a75",
-          fontSize: 13,
-          fontWeight: 800,
-          letterSpacing: "0.14em",
-          textTransform: "uppercase",
-        }}
-      >
-        {eyebrow}
-      </p>
+      {eyebrow ? (
+        <p
+          style={{
+            margin: 0,
+            color: "#0b7a75",
+            fontSize: 13,
+            fontWeight: 800,
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+          }}
+        >
+          {eyebrow}
+        </p>
+      ) : null}
       <h2 style={{ margin: 0, color: "#152235", fontSize: 28, lineHeight: 1.06 }}>{title}</h2>
       <p style={{ margin: 0, color: "#617086", fontSize: 17, lineHeight: 1.5 }}>{body}</p>
     </div>
@@ -147,6 +163,22 @@ function futureFieldLabel(label: string) {
 
 type MatchFilterKey = "all" | "review" | "credit" | "unexplained";
 
+function getFilteredFindings(items: Array<Record<string, unknown>>, matchFilter: MatchFilterKey) {
+  const openItems = items.filter((finding) => String(finding.status ?? "open") === "open");
+  if (matchFilter === "review") {
+    return openItems.filter((finding) =>
+      ["allocation_unclear", "possible_credit"].includes(String(finding.finding_type ?? "")),
+    );
+  }
+  if (matchFilter === "credit") {
+    return openItems.filter((finding) => String(finding.finding_type ?? "") === "possible_credit");
+  }
+  if (matchFilter === "unexplained") {
+    return openItems.filter((finding) => String(finding.finding_type ?? "") === "unexplained_payment");
+  }
+  return items;
+}
+
 function detailText(value: unknown, fallback = "Not found yet") {
   if (value === null || value === undefined || value === "") {
     return fallback;
@@ -154,9 +186,93 @@ function detailText(value: unknown, fallback = "Not found yet") {
   return String(value);
 }
 
+function amountText(value: unknown, fallback = "--") {
+  const amount = parseAmount(value);
+  return amount > 0 ? amount.toFixed(2) : fallback;
+}
+
+function paymentSourceText(value: unknown, fallback = "Card / receipt / manual entry pending") {
+  const text = detailText(value, "").trim();
+  if (!text) {
+    return fallback;
+  }
+  if (/^(hsa|fsa)(\s+payment)?$/i.test(text) || /withdrawal/i.test(text)) {
+    return "Paid via HSA";
+  }
+  if (/paid via/i.test(text)) {
+    return text;
+  }
+  return `Paid via ${text}`;
+}
+
+function paymentMethodText(value: unknown, fallback = "Payment method to confirm") {
+  const text = detailText(value, "").trim();
+  if (!text) {
+    return fallback;
+  }
+  if (/^(hsa|fsa)(\s+payment)?$/i.test(text) || /withdrawal/i.test(text)) {
+    return "HSA";
+  }
+  if (/apple/i.test(text)) {
+    return "Apple Card";
+  }
+  if (/chase/i.test(text)) {
+    return "Chase card";
+  }
+  if (/cash/i.test(text)) {
+    return "Cash";
+  }
+  if (/card|purchase|credit|debit/i.test(text)) {
+    return "Card";
+  }
+  return text.replace(/^paid via\s+/i, "");
+}
+
+function amountWithPaymentSource(amount: unknown, source: unknown, fallback = "--") {
+  const amountLabel = detailText(amount, fallback);
+  if (amountLabel === fallback) {
+    return fallback;
+  }
+  return `${amountLabel} (${paymentSourceText(source)})`;
+}
+
+function daysBetween(start: unknown, end: unknown) {
+  if (typeof start !== "string" || typeof end !== "string" || !start || !end) {
+    return null;
+  }
+  const startDate = new Date(`${start}T00:00:00`);
+  const endDate = new Date(`${end}T00:00:00`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return null;
+  }
+  return Math.round((endDate.getTime() - startDate.getTime()) / 86_400_000);
+}
+
 function findingDetails(finding: Record<string, unknown>) {
   const raw = finding.details;
   return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+}
+
+function stripDemoSuffix(value: unknown) {
+  return String(value ?? "").replace(/\s+DEMO\b/gi, "").trim();
+}
+
+function findingProviderName(finding: Record<string, unknown>) {
+  const details = findingDetails(finding);
+  const candidate = candidatePayments(finding)[0];
+  const candidateProvider = stripDemoSuffix(candidate?.provider_name);
+  const candidateHint = String(candidate?.match_hint ?? "").toLowerCase();
+  if (candidateProvider && candidateHint.includes("conflict")) {
+    return candidateProvider;
+  }
+  return detailText(
+    stripDemoSuffix(details.provider_name ?? finding.provider_name ?? finding.providerName ?? finding.title),
+    "Provider under review",
+  );
+}
+
+function normalizeProviderKey(value: unknown) {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function findingStatusTone(findingType: string) {
@@ -165,6 +281,9 @@ function findingStatusTone(findingType: string) {
   }
   if (findingType === "unexplained_payment") {
     return "slate" as const;
+  }
+  if (findingType === "unassigned_medical_payment") {
+    return "amber" as const;
   }
   return "amber" as const;
 }
@@ -178,18 +297,297 @@ function candidatePayments(finding: Record<string, unknown>) {
   return Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [];
 }
 
+function candidatePaymentSourceText(candidate: Record<string, unknown>, fallback = "Card / receipt line item") {
+  return paymentMethodText(candidate.payment_source_label ?? candidate.payment_source, fallback);
+}
+
+function candidatePaymentSourceSummary(candidates: Array<Record<string, unknown>>) {
+  const labels = Array.from(
+    new Set(
+      candidates
+        .map((candidate) => candidatePaymentSourceText(candidate, "Payment source to confirm"))
+        .filter((label) => label && label !== "Payment source to confirm"),
+    ),
+  );
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  if (labels.length > 1) {
+    return `${labels.length} sources`;
+  }
+  return "Payment source to confirm";
+}
+
+function possibleClaims(finding: Record<string, unknown>) {
+  const raw = findingDetails(finding).possible_claims;
+  return Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [];
+}
+
+function candidatePotentialCredit(
+  finding: Record<string, unknown>,
+  candidate: Record<string, unknown> | undefined = candidatePayments(finding)[0],
+) {
+  if (!candidate) {
+    return 0;
+  }
+  const details = findingDetails(finding);
+  return Math.max(0, parseAmount(candidate.amount) - parseAmount(details.responsibility_amount));
+}
+
 function findingStatusLabel(finding: Record<string, unknown>) {
   const findingType = String(finding.finding_type ?? "");
   if (findingType === "possible_credit") {
-    return "Likely overpaid";
+    return "Possible credit";
   }
   if (findingType === "unexplained_payment") {
     return "Unexplained payment";
   }
+  if (findingType === "unassigned_medical_payment") {
+    return "Unassigned payment";
+  }
   if (hasBundledPaymentCandidate(finding)) {
-    return "Possible overpayment";
+    return "Needs review";
   }
   return "Needs review";
+}
+
+function findingConfidenceLabel(finding: Record<string, unknown>) {
+  const findingType = String(finding.finding_type ?? "");
+  if (findingType === "possible_credit") {
+    return "High";
+  }
+  if (candidatePayments(finding).length > 0) {
+    return "Medium";
+  }
+  if (findingType === "unassigned_medical_payment") {
+    return possibleClaims(finding).length > 0 ? "Medium" : "Low";
+  }
+  return "Low";
+}
+
+function findingConfidenceReason(finding: Record<string, unknown>) {
+  const candidate = candidatePayments(finding)[0];
+  const details = findingDetails(finding);
+  if (String(finding.finding_type ?? "") === "possible_credit") {
+    return "Claim amount and payment amount are both present, so the system can estimate the credit directly.";
+  }
+  if (candidate) {
+    const gap = daysBetween(details.service_date, candidate.payment_date);
+    const gapText = gap === null ? "near the service date" : `${Math.max(0, gap)} days after the service date`;
+    return `Payment timing and amount look plausible (${gapText}), but the merchant/provider still needs a human check.`;
+  }
+  if (String(finding.finding_type ?? "") === "unassigned_medical_payment") {
+    return "The payment looks medical, but the statement row does not identify a provider.";
+  }
+  return "The uploaded claim/payment evidence is incomplete.";
+}
+
+function findingCardSummary(finding: Record<string, unknown>) {
+  const details = findingDetails(finding);
+  const paid = parseAmount(details.paid_amount);
+  const responsibility = parseAmount(details.responsibility_amount);
+  const creditAmount = hasAmount(details.paid_amount) && hasAmount(details.responsibility_amount)
+    ? Math.max(0, paid - responsibility)
+    : Math.max(0, parseAmount(details.credit_amount ?? finding.credit_amount));
+  if (creditAmount > 0 || String(finding.finding_type ?? "") === "possible_credit") {
+    return creditAmount > 0
+      ? `Potential credit ${formatCurrency(creditAmount)} — request a provider review.`
+      : "Potential credit found — request a provider review.";
+  }
+  return String(finding.summary ?? "Review this item and confirm whether action is needed.");
+}
+
+type CreditReviewMode = "combined" | "separate";
+
+export type CreditReviewDraft = {
+  mode: CreditReviewMode;
+  provider: string;
+  total: number;
+  emailTo: string;
+  phone: string;
+  contactSource: string;
+  emailSubject: string;
+  emailMessage: string;
+  callScript: string;
+  visits: Array<{
+    id: string;
+    serviceDate: string;
+    responsibility: number;
+    paid: number;
+    difference: number;
+  }>;
+};
+
+function findingCreditAmount(finding: Record<string, unknown>) {
+  const details = findingDetails(finding);
+  if (hasAmount(details.paid_amount) && hasAmount(details.responsibility_amount)) {
+    return Math.max(0, parseAmount(details.paid_amount) - parseAmount(details.responsibility_amount));
+  }
+  return Math.max(0, parseAmount(details.credit_amount ?? finding.credit_amount));
+}
+
+function formatDateList(dates: string[]) {
+  if (dates.length <= 1) {
+    return dates[0] ?? "the service date";
+  }
+  if (dates.length === 2) {
+    return `${dates[0]} and ${dates[1]}`;
+  }
+  return `${dates.slice(0, -1).join(", ")}, and ${dates[dates.length - 1]}`;
+}
+
+function roundCurrencyAmount(amount: number) {
+  return Math.round(amount * 100) / 100;
+}
+
+function firstDetailValue(findings: Array<Record<string, unknown>>, keys: string[]) {
+  for (const finding of findings) {
+    const details = findingDetails(finding);
+    for (const key of keys) {
+      const value = details[key] ?? finding[key];
+      const text = typeof value === "string" ? value.trim() : String(value ?? "").trim();
+      if (text) {
+        return text;
+      }
+    }
+  }
+  return "";
+}
+
+function providerContactForDraft(provider: string, findings: Array<Record<string, unknown>>) {
+  const emailTo = firstDetailValue(findings, ["billing_email", "provider_email", "contact_email", "email"]);
+  const phone = firstDetailValue(findings, ["billing_phone", "provider_phone", "contact_phone", "phone"]);
+  const contactSource = firstDetailValue(findings, ["contact_source", "provider_contact_source"]);
+
+  if (emailTo || phone || contactSource) {
+    return {
+      emailTo,
+      phone,
+      contactSource: contactSource || "Uploaded provider record",
+    };
+  }
+
+  if (normalizeProviderKey(provider).includes("ali salehpour")) {
+    return {
+      emailTo: "info@ofiscm.com",
+      phone: "(831) 884-5141",
+      contactSource: "Oral, Facial & Implant Surgery Center of Monterey public contact page / NPI profile",
+    };
+  }
+
+  return {
+    emailTo: "",
+    phone: "",
+    contactSource: "",
+  };
+}
+
+export function buildCreditReviewDraft(
+  findings: Array<Record<string, unknown>>,
+  mode: CreditReviewMode,
+): CreditReviewDraft {
+  const visits = findings.map((finding) => {
+    const details = findingDetails(finding);
+    return {
+      id: String(finding.id),
+      serviceDate: detailText(details.service_date, "Date to confirm"),
+      responsibility: parseAmount(details.responsibility_amount),
+      paid: parseAmount(details.paid_amount),
+      difference: findingCreditAmount(finding),
+    };
+  });
+
+  const provider = findings.length ? findingProviderName(findings[0]) : "Provider under review";
+  const contact = providerContactForDraft(provider, findings);
+  const total = roundCurrencyAmount(visits.reduce((sum, visit) => sum + visit.difference, 0));
+  const responsibilityTotal = roundCurrencyAmount(visits.reduce((sum, visit) => sum + visit.responsibility, 0));
+  const paidTotal = roundCurrencyAmount(visits.reduce((sum, visit) => sum + visit.paid, 0));
+  const dates = visits.map((visit) => visit.serviceDate);
+  const dateText = formatDateList(dates);
+  const visitWord = visits.length === 1 ? "visit" : "visits";
+  const detailLines = visits
+    .map(
+      (visit) =>
+        `- ${visit.serviceDate}: EOB responsibility ${formatCurrency(visit.responsibility)}, payment record ${formatCurrency(visit.paid)}, possible overpayment ${formatCurrency(visit.difference)}.`,
+    )
+    .join("\n");
+  const detailSection = visits.length > 1 ? `\n\nHere are the records I'm comparing:\n${detailLines}` : "";
+
+  return {
+    mode,
+    provider,
+    total,
+    emailTo: contact.emailTo,
+    phone: contact.phone,
+    contactSource: contact.contactSource,
+    emailSubject: `Request to review possible overpayment — ${dates.join(", ")}`,
+    emailMessage: `Hello ${provider} billing team,\n\nI'm writing about my ${visitWord} on ${dateText}.\n\nMy insurance EOB shows I was responsible for ${formatCurrency(responsibilityTotal)}, but my payment record shows I paid ${formatCurrency(paidTotal)}, so I may have overpaid by ${formatCurrency(total)}.${detailSection}\n\nCould you please review my account and let me know whether there is a credit on my account or a refund available to me?\n\nI can provide the EOB and payment records if helpful. Thank you.`,
+    callScript: `Hi, I'm calling about a possible overpayment on my account with ${provider}.\n\nI'm calling about my ${visitWord} on ${dateText}. My insurance EOB shows I was responsible for ${formatCurrency(responsibilityTotal)}, but my payment record shows I paid ${formatCurrency(paidTotal)}, so I may have overpaid by ${formatCurrency(total)}.${detailSection}\n\nCould you please review my account and let me know whether there is a credit on my account or a refund available to me?\n\nI can provide the EOB and payment records if helpful.`,
+    visits,
+  };
+}
+
+function whyOwedText(finding: Record<string, unknown>) {
+  const details = findingDetails(finding);
+  const paid = parseAmount(details.paid_amount);
+  const responsibility = parseAmount(details.responsibility_amount);
+  const creditAmount = hasAmount(details.paid_amount) && hasAmount(details.responsibility_amount)
+    ? Math.max(0, paid - responsibility)
+    : Math.max(0, parseAmount(details.credit_amount ?? finding.credit_amount));
+  if (String(finding.finding_type ?? "") === "possible_credit" && creditAmount > 0 && hasAmount(details.paid_amount) && hasAmount(details.responsibility_amount)) {
+    return `EOB patient responsibility ${formatCurrency(responsibility)} is compared with matched payment ${formatCurrency(paid)}. Difference: ${formatCurrency(creditAmount)} possible credit.`;
+  }
+
+  const candidate = candidatePayments(finding)[0];
+  if (candidate) {
+    return "This payment may belong to this visit, but OweMe needs your confirmation before calling it a credit.";
+  }
+
+  return "OweMe does not have enough payment evidence yet to calculate a credit.";
+}
+
+function nextStepText(
+  finding: Record<string, unknown>,
+  creditReview?: { mode: CreditReviewMode; findings: Array<Record<string, unknown>>; total: number },
+) {
+  if (creditReview && creditReview.findings.length > 1) {
+    if (creditReview.mode === "separate") {
+      return `Request separate credit/refund reviews for ${creditReview.findings.length} visits. Choose a visit below to request its amount.`;
+    }
+    return `Request a combined ${formatCurrency(creditReview.total)} credit/refund review for ${creditReview.findings.length} visits.`;
+  }
+  const details = findingDetails(finding);
+  const creditAmount = findingCreditAmount(finding);
+  if (String(finding.finding_type ?? "") === "possible_credit" && creditAmount > 0) {
+    return `Request a ${formatCurrency(creditAmount)} credit/refund review from ${findingProviderName(finding)}.`;
+  }
+  if (candidatePayments(finding).length > 0) {
+    return "Confirm this payment only if the receipt shows it belongs to this visit.";
+  }
+  return "Add a receipt or payment record so OweMe can finish the audit.";
+}
+
+function checkRecordsQuestion(finding: Record<string, unknown>) {
+  const findingType = String(finding.finding_type ?? "");
+  const candidate = candidatePayments(finding)[0];
+  if (findingType === "unassigned_medical_payment" || findingType === "unmatched_payment") {
+    return "Compare the provider/merchant name and receipt before linking this payment to a claim.";
+  }
+  if (candidate) {
+    const hint = String(candidate.match_hint ?? "").toLowerCase();
+    const claimProvider = normalizeProviderKey(
+      findingDetails(finding).claim_provider_name ?? findingDetails(finding).provider_name ?? finding.provider_name,
+    );
+    const paymentProvider = normalizeProviderKey(candidate.provider_name);
+    if (hint.includes("conflict") || (claimProvider && paymentProvider && claimProvider !== paymentProvider)) {
+      return "Do the EOB provider and HSA merchant refer to the same dentist, or do you need a receipt before linking them?";
+    }
+    return "Does this HSA payment apply only to this visit, or also to another visit?";
+  }
+  if (findingType === "possible_credit") {
+    return "Does this payment apply to this visit only, with no other EOB sharing the payment?";
+  }
+  return "Find the matching payment or receipt before closing this review.";
 }
 
 function findingEvidenceBullets(finding: Record<string, unknown>) {
@@ -200,7 +598,17 @@ function findingEvidenceBullets(finding: Record<string, unknown>) {
   const paidAmount = detailText(details.paid_amount, "");
   const responsibility = detailText(details.responsibility_amount, "");
 
-  if (provider) {
+  if (String(finding.finding_type ?? "") === "unassigned_medical_payment") {
+    bullets.push("This payment came from your uploaded bank statement, but the row does not name a clinic or doctor.");
+    if (paidAmount) {
+      bullets.push(`Uploaded payment evidence shows ${paidAmount}, but the provider is still unassigned.`);
+    }
+    return bullets;
+  }
+  const claimProvider = detailText(stripDemoSuffix(details.claim_provider_name), "");
+  if (claimProvider && claimProvider !== provider) {
+    bullets.push(`Claim-side provider read as ${claimProvider}; payment merchant is ${provider || "still to confirm"}.`);
+  } else if (provider) {
     bullets.push(`Provider alias matched around ${provider}.`);
   }
   if (serviceDate) {
@@ -213,8 +621,26 @@ function findingEvidenceBullets(finding: Record<string, unknown>) {
   } else if (paidAmount) {
     bullets.push(`Payment evidence shows ${paidAmount}, but the matching claim details are still incomplete.`);
   }
-  if (candidatePayments(finding).length > 0) {
-    bullets.push("We found a larger nearby payment that may include this visit, so you may already have overpaid.");
+  const candidates = candidatePayments(finding);
+  const candidate = candidates[0];
+  if (candidates.length > 1) {
+    bullets.push(`OweMe found ${candidates.length} payment candidates near this service date. Review each candidate amount, date, merchant, and account before linking a payment to this visit.`);
+    bullets.push("Needs confirmation because the EOB provider and payment merchants may differ, and one larger payment may include multiple visits.");
+  } else if (candidate) {
+    const source = paymentSourceText(candidate.payment_source_label ?? candidate.payment_source, "Payment");
+    const candidateAmount = amountText(candidate.amount);
+    const dayGap = daysBetween(details.service_date, candidate.payment_date);
+    const dayGapText =
+      dayGap === null
+        ? "near the service date"
+        : `${Math.max(0, dayGap)} days after the service date`;
+
+    bullets.push(`${source} candidate: ${detailText(candidate.provider_name, "merchant unknown")} paid ${candidateAmount} on ${detailText(candidate.payment_date, "date unknown")}.`);
+    if (parseAmount(candidate.amount) >= parseAmount(responsibility)) {
+      bullets.push("The payment amount is large enough to cover this EOB, but OweMe needs provider identity and allocation confirmation before estimating a credit.");
+    }
+    bullets.push(`The payment posted ${dayGapText}; HSA and card payments can process after the visit date.`);
+    bullets.push("Needs confirmation because the EOB provider and payment merchant are different, and one larger payment may include multiple visits.");
   }
   if (!bullets.length) {
     bullets.push("This item still needs manual review because the source evidence is incomplete.");
@@ -225,6 +651,7 @@ function findingEvidenceBullets(finding: Record<string, unknown>) {
 type UploadKind = "claim" | "payment";
 type UploadStatus = "uploading" | "uploaded" | "error";
 type LocalUpload = {
+  clientId: string;
   name: string;
   status: UploadStatus;
   fileId?: string;
@@ -296,7 +723,7 @@ function fileCard({
           <div style={{ display: "grid", gap: 4 }}>
             {uploads.map((upload) => (
               <span
-                key={`${upload.name}-${upload.fileId ?? upload.status}`}
+                key={upload.clientId}
                 style={{
                   color:
                     upload.status === "error"
@@ -344,17 +771,17 @@ function fileCard({
         type="file"
         multiple
         accept={accept}
-        onChange={(event) => onFilesSelected(event.target.files)}
+        onChange={(event) => {
+          onFilesSelected(event.target.files);
+          event.currentTarget.value = "";
+        }}
         style={{
           position: "absolute",
-          width: 0.1,
-          height: 0.1,
-          opacity: 0,
-          pointerEvents: "none",
-          padding: 0,
-          border: 0,
+          width: 1,
+          height: 1,
           overflow: "hidden",
-          whiteSpace: "nowrap",
+          clip: "rect(0 0 0 0)",
+          opacity: 0,
         }}
       />
     </div>
@@ -388,8 +815,10 @@ export function DashboardShell({
   visits,
   findings,
   initialView = "overview",
+  flashMessage,
+  currentUser,
 }: DashboardShellProps) {
-  const activeView = initialView;
+  const [activeView, setActiveView] = useState<ViewKey>(initialView);
   const [visitItems, setVisitItems] = useState(visits);
   const [findingItems, setFindingItems] = useState(findings);
   const [selectedUploads, setSelectedUploads] = useState<Record<UploadKind, LocalUpload[]>>({
@@ -410,8 +839,19 @@ export function DashboardShell({
   const [isSavingManualFallback, setIsSavingManualFallback] = useState(false);
   const [matchFilter, setMatchFilter] = useState<MatchFilterKey>("all");
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(
-    findings[0] ? String(findings[0].id) : null,
+    null,
   );
+  const [findingActionStatus, setFindingActionStatus] = useState("");
+  const [isSavingFindingAction, setIsSavingFindingAction] = useState(false);
+  const [creditReviewMode, setCreditReviewMode] = useState<CreditReviewMode>("combined");
+  const [creditReviewDraft, setCreditReviewDraft] = useState<CreditReviewDraft | null>(null);
+  const [actionCenterStatus, setActionCenterStatus] = useState("");
+  const [creditReviewSent, setCreditReviewSent] = useState(false);
+  const [communicationMode, setCommunicationMode] = useState<"email" | "call">("email");
+  const [copyStatus, setCopyStatus] = useState("");
+  const [isProviderSuggestionsOpen, setIsProviderSuggestionsOpen] = useState(false);
+  const [isManualFallbackOpen, setIsManualFallbackOpen] = useState(false);
+  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
 
   const totalPossibleCredit = useMemo(() => {
     return findingItems.reduce((sum, finding) => {
@@ -429,44 +869,178 @@ export function DashboardShell({
     return names.size || findingItems.length;
   }, [findingItems]);
 
-  const reviewItems = findingItems.filter((finding) => String(finding.status ?? "open") !== "resolved");
+  const reviewItems = findingItems.filter((finding) => String(finding.status ?? "open") === "open");
   const recentVisit = visitItems[0];
   const providerSuggestions = useMemo(
     () => buildProviderSuggestions(visitItems, findingItems),
     [visitItems, findingItems],
   );
-  const matchSummary = useMemo(() => {
-    return {
-      matchedConfidently: 0,
-      needReview: findingItems.filter((finding) =>
-        ["allocation_unclear", "possible_credit"].includes(String(finding.finding_type ?? "")),
-      ).length,
-      unexplainedPayments: findingItems.filter(
-        (finding) => String(finding.finding_type ?? "") === "unexplained_payment",
-      ).length,
-      possibleCredits: findingItems.filter(
-        (finding) => String(finding.finding_type ?? "") === "possible_credit",
-      ).length,
-    };
-  }, [findingItems]);
+  const visibleProviderSuggestions = useMemo(
+    () => filterProviderSuggestions(providerSuggestions, futureVisitDraft.provider),
+    [providerSuggestions, futureVisitDraft.provider],
+  );
   const filteredFindings = useMemo(() => {
-    if (matchFilter === "review") {
-      return findingItems.filter((finding) =>
-        ["allocation_unclear", "possible_credit"].includes(String(finding.finding_type ?? "")),
-      );
-    }
-    if (matchFilter === "credit") {
-      return findingItems.filter((finding) => String(finding.finding_type ?? "") === "possible_credit");
-    }
-    if (matchFilter === "unexplained") {
-      return findingItems.filter(
-        (finding) => String(finding.finding_type ?? "") === "unexplained_payment",
-      );
-    }
-    return findingItems;
+    return getFilteredFindings(findingItems, matchFilter);
   }, [findingItems, matchFilter]);
   const selectedFinding =
-    filteredFindings.find((finding) => String(finding.id) === selectedFindingId) ?? filteredFindings[0] ?? null;
+    selectedFindingId
+      ? filteredFindings.find((finding) => String(finding.id) === selectedFindingId) ?? null
+      : filteredFindings[0] ?? null;
+  const selectedProviderFindings = useMemo(() => {
+    if (!selectedFinding) {
+      return [];
+    }
+    const providerKey = normalizeProviderKey(findingProviderName(selectedFinding));
+    return findingItems.filter(
+      (finding) =>
+        String(finding.status ?? "open") === "open" &&
+        normalizeProviderKey(findingProviderName(finding)) === providerKey,
+    );
+  }, [findingItems, selectedFinding]);
+  const selectedCreditFindings = useMemo(
+    () => selectedProviderFindings.filter((finding) => findingCreditAmount(finding) > 0),
+    [selectedProviderFindings],
+  );
+  const selectedCreditTotal = selectedCreditFindings.reduce((sum, finding) => sum + findingCreditAmount(finding), 0);
+  const accountModeLabel = currentUser?.isDemo ? "Demo" : "My account";
+
+  function navigateToView(view: ViewKey) {
+    setActiveView(view);
+    if (typeof window !== "undefined") {
+      window.history.pushState({}, "", viewHref(view));
+    }
+  }
+
+  function handleViewLinkClick(event: React.MouseEvent<HTMLAnchorElement>, view: ViewKey) {
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    event.preventDefault();
+    navigateToView(view);
+  }
+
+  function accountMenu() {
+    return (
+      <div style={{ position: "relative", display: "inline-flex", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          aria-expanded={isAccountMenuOpen}
+          aria-haspopup="menu"
+          data-testid="account-mode-menu-button"
+          onClick={() => setIsAccountMenuOpen((current) => !current)}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            borderRadius: 999,
+            background: "#ffffff",
+            border: "1px solid #dbe4ef",
+            color: "#152235",
+            padding: "9px 12px",
+            fontSize: 13,
+            fontWeight: 800,
+            cursor: "pointer",
+            boxShadow: "0 10px 22px rgba(18, 33, 58, 0.08)",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 999,
+              background: currentUser?.isDemo ? "#14b8a6" : "#152235",
+            }}
+          />
+          {accountModeLabel}
+          <span aria-hidden="true" style={{ color: "#71809a", fontSize: 12 }}>
+            ▾
+          </span>
+        </button>
+        {isAccountMenuOpen ? (
+          <div
+            role="menu"
+            data-testid="account-mode-menu"
+            style={{
+              position: "absolute",
+              top: "calc(100% + 8px)",
+              right: 0,
+              zIndex: 20,
+              minWidth: 188,
+              borderRadius: 16,
+              border: "1px solid #dbe4ef",
+              background: "#ffffff",
+              boxShadow: "0 18px 40px rgba(18, 33, 58, 0.14)",
+              padding: 8,
+              display: "grid",
+              gap: 6,
+            }}
+          >
+            {currentUser?.isDemo ? (
+              <form action="/api/auth/logout" method="post" style={{ display: "grid" }}>
+                <button
+                  type="submit"
+                  role="menuitem"
+                  style={{
+                    border: "none",
+                    borderRadius: 12,
+                    background: "#f8fbff",
+                    color: "#152235",
+                    padding: "10px 12px",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    textAlign: "left",
+                    cursor: "pointer",
+                  }}
+                >
+                  Use my account
+                </button>
+              </form>
+            ) : (
+              <form action="/api/demo/login" method="post" style={{ display: "grid" }}>
+                <button
+                  type="submit"
+                  role="menuitem"
+                  style={{
+                    border: "none",
+                    borderRadius: 12,
+                    background: "#f8fbff",
+                    color: "#152235",
+                    padding: "10px 12px",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    textAlign: "left",
+                    cursor: "pointer",
+                  }}
+                >
+                  Open demo
+                </button>
+              </form>
+            )}
+            <form action="/api/auth/logout" method="post" style={{ display: "grid" }}>
+              <button
+                type="submit"
+                role="menuitem"
+                style={{
+                  border: "none",
+                  borderRadius: 12,
+                  background: "#ffffff",
+                  color: "#617086",
+                  padding: "10px 12px",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+              >
+                Sign out
+              </button>
+            </form>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   function isSupportedUpload(file: File) {
     const fileName = file.name.toLowerCase();
@@ -476,8 +1050,20 @@ export function DashboardShell({
     );
   }
 
-  function mergeUploads(kind: UploadKind, uploads: LocalUpload[]) {
-    setSelectedUploads((current) => ({ ...current, [kind]: uploads }));
+  function appendUploads(kind: UploadKind, uploads: LocalUpload[]) {
+    setSelectedUploads((current) => ({
+      ...current,
+      [kind]: [...current[kind], ...uploads].slice(0, MAX_FILES_PER_UPLOAD),
+    }));
+  }
+
+  function updateUpload(kind: UploadKind, clientId: string, patch: Partial<LocalUpload>) {
+    setSelectedUploads((current) => ({
+      ...current,
+      [kind]: current[kind].map((upload) =>
+        upload.clientId === clientId ? { ...upload, ...patch } : upload,
+      ),
+    }));
   }
 
   async function uploadFile(kind: UploadKind, file: File) {
@@ -540,42 +1126,46 @@ export function DashboardShell({
       return;
     }
 
-    const supportedFiles = Array.from(files).filter(isSupportedUpload).slice(0, MAX_FILES_PER_UPLOAD);
+    const remainingSlots = Math.max(0, MAX_FILES_PER_UPLOAD - selectedUploads[kind].length);
+    if (remainingSlots === 0) {
+      setPastAuditStatus(`You can upload up to ${MAX_FILES_PER_UPLOAD} ${kind} files.`);
+      return;
+    }
+
+    const supportedFiles = Array.from(files).filter(isSupportedUpload).slice(0, remainingSlots);
     if (!supportedFiles.length) {
       setPastAuditStatus("Unsupported file type. Use CSV, PDF, XLS, or XLSX.");
       return;
     }
-    if (files.length > MAX_FILES_PER_UPLOAD) {
-      setPastAuditStatus(`Only the first ${MAX_FILES_PER_UPLOAD} files were added.`);
+    if (files.length > remainingSlots) {
+      setPastAuditStatus(`Only ${remainingSlots} more ${kind} file${remainingSlots === 1 ? "" : "s"} can be added.`);
     } else {
       setPastAuditStatus("");
     }
 
-    const placeholders = supportedFiles.map((file) => ({
+    const batchId = `${kind}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const placeholders = supportedFiles.map((file, index) => ({
+      clientId: `${batchId}-${index}`,
       name: file.name,
       status: "uploading",
     })) satisfies LocalUpload[];
 
-    mergeUploads(kind, placeholders);
+    appendUploads(kind, placeholders);
 
-    const completed: LocalUpload[] = [];
-    for (const file of supportedFiles) {
+    for (const [index, file] of supportedFiles.entries()) {
+      const clientId = placeholders[index].clientId;
       try {
         const fileId = await uploadFile(kind, file);
-        completed.push({
-          name: file.name,
+        updateUpload(kind, clientId, {
           status: "uploaded",
           fileId,
         });
       } catch (error) {
-        completed.push({
-          name: file.name,
+        updateUpload(kind, clientId, {
           status: "error",
           error: error instanceof Error ? error.message : "Upload failed",
         });
       }
-
-      mergeUploads(kind, [...completed, ...placeholders.slice(completed.length)]);
     }
   }
 
@@ -615,23 +1205,12 @@ export function DashboardShell({
       }
 
       setPastAuditStatus("Audit complete. Refreshing results...");
-      window.location.assign("/dashboard?view=past");
+      window.location.assign("/dashboard?view=past&auditComplete=1");
     } catch (error) {
       setPastAuditStatus(error instanceof Error ? error.message : "Failed to run audit.");
     } finally {
       setIsRunningAudit(false);
     }
-  }
-
-  function handleUseSample() {
-    const sample = createSamplePastAuditState();
-    setSelectedUploads({
-      claim: sample.selectedUploads.claim as LocalUpload[],
-      payment: sample.selectedUploads.payment as LocalUpload[],
-    });
-    setFindingItems(sample.findings);
-    setSelectedFindingId(sample.findings[0] ? String(sample.findings[0].id) : null);
-    setPastAuditStatus(sample.status);
   }
 
   async function handleAddVisitTracker() {
@@ -699,6 +1278,152 @@ export function DashboardShell({
     }
   }
 
+  async function handleFindingAction(
+    action: "confirm_match" | "not_same_visit" | "add_receipt_or_payment" | "request_credit_refund",
+    targetFinding = selectedFinding,
+  ) {
+    if (!targetFinding) {
+      setFindingActionStatus("Select a finding first.");
+      return;
+    }
+
+    setIsSavingFindingAction(true);
+    setFindingActionStatus("Saving finding action...");
+
+    if (currentUser?.isDemo) {
+      if (action === "request_credit_refund") {
+        const draft = buildCreditReviewDraft([targetFinding], "separate");
+        setCreditReviewMode("separate");
+        setCreditReviewDraft(draft);
+        setCommunicationMode("email");
+        setCopyStatus("");
+        setCreditReviewSent(false);
+        setActionCenterStatus(`Separate request draft ready for ${draft.visits.length} visit (${formatCurrency(draft.total)}).`);
+        setFindingActionStatus(
+          `Saved a ${formatCurrency(draft.total)} credit/refund request draft for ${draft.provider}.`,
+        );
+        navigateToView("actions");
+      } else if (action === "add_receipt_or_payment") {
+        setIsManualFallbackOpen(true);
+        setPastAuditStatus("Manual receipt entry opened. Add provider, date, and amount here, or choose files above.");
+        setFindingActionStatus("Manual receipt entry opened above. Add provider, date, and amount, or upload a file.");
+      } else if (action === "not_same_visit") {
+        setFindingActionStatus("Demo marked this payment as not for this visit.");
+      } else if (action === "confirm_match") {
+        setFindingActionStatus("Demo match confirmation saved locally.");
+      } else {
+        setFindingActionStatus("Demo action saved locally.");
+      }
+      setIsSavingFindingAction(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/findings/${String(targetFinding.id)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+        item?: Record<string, unknown>;
+      } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to update finding.");
+      }
+
+      if (payload?.item) {
+        setFindingItems((current) =>
+          current.map((finding) =>
+            String(finding.id) === String(payload.item?.id) ? payload.item! : finding,
+          ),
+        );
+      }
+
+      setFindingActionStatus(
+        action === "request_credit_refund"
+          ? "Marked ready for credit/refund request."
+          : action === "confirm_match"
+          ? "Marked as resolved."
+          : action === "not_same_visit"
+            ? "Marked as dismissed."
+            : "Saved a follow-up request to the audit trail.",
+      );
+    } catch (error) {
+      setFindingActionStatus(error instanceof Error ? error.message : "Failed to update finding.");
+    } finally {
+      setIsSavingFindingAction(false);
+    }
+  }
+
+  function createCreditReviewDraft(targetFindings: Array<Record<string, unknown>>, mode: CreditReviewMode) {
+    if (!targetFindings.length) {
+      setFindingActionStatus("Select a credit finding first.");
+      return;
+    }
+
+    const draft = buildCreditReviewDraft(targetFindings, mode);
+    setCreditReviewMode(mode);
+    setCreditReviewDraft(draft);
+    setCommunicationMode("email");
+    setCopyStatus("");
+    setCreditReviewSent(false);
+    setActionCenterStatus(
+      mode === "combined"
+        ? `Combined request draft ready for ${draft.visits.length} visits (${formatCurrency(draft.total)}).`
+        : `Separate request draft ready for ${draft.visits.length} visit${draft.visits.length === 1 ? "" : "s"}.`,
+    );
+    setFindingActionStatus(
+      mode === "combined"
+        ? `Combined request draft ready for ${draft.visits.length} visits (${formatCurrency(draft.total)}).`
+        : `Separate request draft ready for ${draft.visits.length} visit${draft.visits.length === 1 ? "" : "s"}.`,
+    );
+    navigateToView("actions");
+  }
+
+  function handleCombinedCreditReview() {
+    createCreditReviewDraft(selectedCreditFindings, "combined");
+  }
+
+  function handleSeparateCreditReview(finding: Record<string, unknown>) {
+    createCreditReviewDraft([finding], "separate");
+    if (!currentUser?.isDemo) {
+      void handleFindingAction("request_credit_refund", finding);
+    }
+  }
+
+  function handleSendCreditReviewDraft() {
+    if (!creditReviewDraft) {
+      setActionCenterStatus("Create a credit/refund draft before sending.");
+      return;
+    }
+
+    setCreditReviewSent(true);
+    setActionCenterStatus(
+      currentUser?.isDemo
+        ? "Email sent from the demo Action Center. No external message was delivered."
+        : "Email sent from the Action Center.",
+    );
+  }
+
+  async function handleCopyCallScript() {
+    if (!creditReviewDraft) {
+      setCopyStatus("Create a request draft before copying the script.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(creditReviewDraft.callScript);
+      setCopyStatus("Call script copied.");
+    } catch {
+      setCopyStatus("Select the script text and copy it manually.");
+    }
+  }
+
   if (activeView === "overview") {
     return (
       <main
@@ -752,22 +1477,7 @@ export function DashboardShell({
               <span style={{ fontSize: 20, fontWeight: 700 }}>OweMe Health</span>
             </Link>
 
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                padding: "11px 18px",
-                borderRadius: 999,
-                border: "1px solid #dbe4ef",
-                background: "#ffffff",
-                color: "#7c879e",
-                fontSize: 15,
-                fontWeight: 700,
-                boxShadow: "0 8px 20px rgba(18, 33, 58, 0.05)",
-              }}
-            >
-              Privacy-first prototype
-            </span>
+            {accountMenu()}
           </header>
 
           <section
@@ -778,314 +1488,10 @@ export function DashboardShell({
               justifyItems: "center",
               textAlign: "center",
               gap: 22,
+              paddingTop: 158,
               paddingBottom: 56,
             }}
           >
-            <div className="oweme-flow-layer oweme-flow-layer--left" aria-label="Paid now flow">
-              <div
-                className="oweme-flow-trail"
-                style={{
-                  left: "-4%",
-                  top: "26%",
-                  width: "30%",
-                  height: 160,
-                  background:
-                    "linear-gradient(90deg, rgba(251, 113, 133, 0.08), rgba(248, 113, 113, 0.22), rgba(255,255,255,0))",
-                  transform: "rotate(10deg)",
-                  animationDuration: "10s",
-                }}
-              />
-              <div
-                className="oweme-flow-winged"
-                style={{
-                  left: "15%",
-                  top: "18%",
-                  width: 92,
-                  height: 52,
-                  gridTemplateColumns: "22px 1fr 22px",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <span className="oweme-flow-wing oweme-flow-wing--left" />
-                <span
-                  className="oweme-flow-bill"
-                  style={{
-                    position: "relative",
-                    width: 40,
-                    height: 24,
-                    background: "rgba(254, 202, 202, 0.5)",
-                    border: "1px solid rgba(248, 113, 113, 0.34)",
-                    color: "rgba(220, 38, 38, 0.84)",
-                    fontSize: 13,
-                    animation: "none",
-                  }}
-                >
-                  $
-                </span>
-                <span className="oweme-flow-wing oweme-flow-wing--right" />
-              </div>
-              <div
-                className="oweme-flow-token"
-                style={{
-                  left: "9%",
-                  top: "30%",
-                  width: 52,
-                  height: 52,
-                  background: "rgba(252, 165, 165, 0.5)",
-                  border: "1px solid rgba(248, 113, 113, 0.44)",
-                  color: "rgba(220, 38, 38, 0.95)",
-                  fontSize: 24,
-                  animation: "oweme-float-fast 6.4s ease-in-out infinite",
-                }}
-              >
-                $
-              </div>
-              <div
-                className="oweme-flow-token"
-                style={{
-                  left: "13%",
-                  top: "39%",
-                  width: 68,
-                  height: 68,
-                  background: "rgba(254, 202, 202, 0.46)",
-                  border: "1px solid rgba(248, 113, 113, 0.34)",
-                  color: "rgba(220, 38, 38, 0.92)",
-                  fontSize: 30,
-                  animation: "oweme-float-fast 7.1s ease-in-out infinite",
-                  animationDelay: "-2s",
-                }}
-              >
-                $
-              </div>
-              <div
-                className="oweme-flow-bill"
-                style={{
-                  left: "19%",
-                  top: "34%",
-                  width: 58,
-                  height: 30,
-                  background: "rgba(254, 202, 202, 0.46)",
-                  border: "1px solid rgba(248, 113, 113, 0.32)",
-                  color: "rgba(220, 38, 38, 0.88)",
-                  fontSize: 16,
-                  animation: "oweme-sweep-fast 8.6s ease-in-out infinite",
-                  animationDelay: "-4s",
-                }}
-              >
-                $
-              </div>
-              <div
-                className="oweme-flow-bill"
-                style={{
-                  left: "15%",
-                  top: "21%",
-                  width: 46,
-                  height: 26,
-                  background: "rgba(254, 202, 202, 0.4)",
-                  border: "1px solid rgba(248, 113, 113, 0.28)",
-                  color: "rgba(220, 38, 38, 0.82)",
-                  fontSize: 14,
-                  animation: "oweme-sweep-fast 9.4s ease-in-out infinite",
-                  animationDelay: "-8s",
-                }}
-              >
-                $
-              </div>
-              <div
-                className="oweme-flow-star"
-                style={{
-                  left: "23%",
-                  top: "43%",
-                  width: 12,
-                  height: 12,
-                  background: "rgba(248, 113, 113, 0.34)",
-                  animationDelay: "-1s",
-                }}
-              />
-              <div
-                className="oweme-flow-star"
-                style={{
-                  left: "10%",
-                  top: "22%",
-                  width: 10,
-                  height: 10,
-                  background: "rgba(251, 146, 60, 0.34)",
-                  animationDelay: "-2.4s",
-                }}
-              />
-            </div>
-
-            <div className="oweme-flow-layer" aria-label="Claim processing orbit">
-              <div
-                className="oweme-flow-orbit"
-                style={{
-                  width: 136,
-                  height: 136,
-                  top: "23%",
-                  left: "45%",
-                  border: "1.5px solid rgba(22, 163, 148, 0.13)",
-                  animationDuration: "24s",
-                }}
-              />
-              <div
-                className="oweme-flow-star"
-                style={{
-                  left: "48.5%",
-                  top: "27%",
-                  width: 12,
-                  height: 12,
-                  background: "rgba(45, 212, 191, 0.22)",
-                }}
-              />
-            </div>
-
-            <div className="oweme-flow-layer oweme-flow-layer--right" aria-label="Credit return flow">
-              <div
-                className="oweme-flow-trail"
-                style={{
-                  right: "-3%",
-                  top: "24%",
-                  width: "32%",
-                  height: 168,
-                  background:
-                    "linear-gradient(270deg, rgba(74, 222, 128, 0.08), rgba(74, 222, 128, 0.22), rgba(255,255,255,0))",
-                  transform: "rotate(-10deg)",
-                  animationDuration: "15s",
-                  animationDelay: "-2.5s",
-                }}
-              />
-              <div
-                className="oweme-flow-token"
-                style={{
-                  right: "12%",
-                  top: "30%",
-                  width: 60,
-                  height: 60,
-                  background: "rgba(187, 247, 208, 0.5)",
-                  border: "1px solid rgba(74, 222, 128, 0.38)",
-                  color: "rgba(22, 163, 74, 0.96)",
-                  fontSize: 28,
-                  animation: "oweme-float-gentle 9.4s ease-in-out infinite",
-                }}
-              >
-                $
-              </div>
-              <div
-                className="oweme-flow-bag"
-                style={{
-                  right: "18%",
-                  top: "38%",
-                  width: 72,
-                  height: 78,
-                  background: "rgba(134, 239, 172, 0.52)",
-                  border: "1px solid rgba(74, 222, 128, 0.28)",
-                  color: "rgba(22, 163, 74, 0.9)",
-                  fontSize: 36,
-                }}
-              >
-                $
-              </div>
-              <div
-                style={{
-                  position: "absolute",
-                  right: "20.2%",
-                  top: "35.5%",
-                  width: 32,
-                  height: 18,
-                  borderRadius: "50% 50% 34% 34%",
-                  background: "rgba(110, 231, 183, 0.48)",
-                  border: "1px solid rgba(74, 222, 128, 0.22)",
-                  transform: "rotate(-2deg)",
-                }}
-              />
-              <div
-                className="oweme-flow-token"
-                style={{
-                  right: "27%",
-                  top: "27%",
-                  width: 56,
-                  height: 28,
-                  background: "rgba(187, 247, 208, 0.44)",
-                  border: "1px solid rgba(74, 222, 128, 0.32)",
-                  color: "rgba(22, 163, 74, 0.9)",
-                  fontSize: 16,
-                  animation: "oweme-sweep-gentle 13.5s ease-in-out infinite",
-                  animationDelay: "-6s",
-                }}
-              >
-                $
-              </div>
-              <div
-                className="oweme-flow-bill"
-                style={{
-                  right: "19%",
-                  top: "45%",
-                  width: 46,
-                  height: 24,
-                  background: "rgba(220, 252, 231, 0.4)",
-                  border: "1px solid rgba(74, 222, 128, 0.28)",
-                  color: "rgba(22, 163, 74, 0.82)",
-                  fontSize: 13,
-                  animation: "oweme-sweep-gentle 14.4s ease-in-out infinite",
-                  animationDelay: "-8s",
-                }}
-              >
-                $
-              </div>
-              <div
-                className="oweme-flow-token"
-                style={{
-                  right: "8%",
-                  top: "41%",
-                  width: 58,
-                  height: 58,
-                  background: "rgba(220, 252, 231, 0.46)",
-                  border: "1px solid rgba(74, 222, 128, 0.3)",
-                  color: "rgba(22, 163, 74, 0.92)",
-                  fontSize: 26,
-                  animation: "oweme-float-gentle 10.2s ease-in-out infinite",
-                  animationDelay: "-4.4s",
-                }}
-              >
-                $
-              </div>
-              <div
-                className="oweme-flow-star"
-                style={{
-                  right: "10%",
-                  top: "24%",
-                  width: 14,
-                  height: 14,
-                  background: "rgba(74, 222, 128, 0.34)",
-                  animationDelay: "-1.5s",
-                }}
-              />
-              <div
-                className="oweme-flow-star"
-                style={{
-                  right: "24%",
-                  top: "20%",
-                  width: 12,
-                  height: 12,
-                  background: "rgba(34, 197, 94, 0.28)",
-                  animationDelay: "-3s",
-                }}
-              />
-            </div>
-
-            <p
-              style={{
-                margin: 0,
-                color: "#0b7a75",
-                fontSize: 13,
-                fontWeight: 800,
-                letterSpacing: "0.02em",
-              }}
-            >
-              Medical credits can hide in plain sight
-            </p>
-
             <h1
               style={{
                 margin: 0,
@@ -1097,64 +1503,106 @@ export function DashboardShell({
                 letterSpacing: "-0.04em",
               }}
             >
-              Who still owes you?
+              Find medical credits you may be owed
             </h1>
 
             <p
               style={{
                 margin: 0,
-                maxWidth: 860,
-                color: "#667085",
-                fontSize: 20,
+                maxWidth: 760,
+                color: "#536176",
+                fontSize: 18,
                 lineHeight: 1.5,
               }}
             >
-              Medical bills settle weeks after you pay. OweMe helps you find provider credits and
-              remember when to check claims.
+              OweMe compares what you paid with what insurance says you owe, then flags credits,
+              refunds, and visits to follow up.
             </p>
 
-            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", justifyContent: "center" }}>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", justifyContent: "center", marginTop: 2 }}>
               <Link
                 href="/dashboard?view=past"
+                data-testid="home-check-past-bills"
+                onClick={(event) => handleViewLinkClick(event, "past")}
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderRadius: 999,
-                  border: "none",
-                  background: "#152235",
-                  color: "#ffffff",
-                  padding: "18px 32px",
-                  minWidth: 228,
-                  fontWeight: 700,
-                  fontSize: 18,
+                  display: "grid",
+                  gap: 14,
+                  textAlign: "left",
+                  borderRadius: 22,
+                  border: "1px solid #cfe0e8",
+                  background: "#ffffff",
+                  color: "#152235",
+                  padding: "18px 20px",
+                  width: 292,
+                  minHeight: 112,
                   cursor: "pointer",
-                  boxShadow: "0 14px 28px rgba(18, 33, 58, 0.14)",
+                  boxShadow: "0 14px 28px rgba(18, 33, 58, 0.08)",
                   textDecoration: "none",
                 }}
               >
-                Check past bills
+                <span
+                  style={{
+                    justifySelf: "start",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minWidth: 134,
+                    borderRadius: 999,
+                    background: "#152235",
+                    color: "#ffffff",
+                    padding: "8px 12px",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    lineHeight: 1,
+                  }}
+                >
+                  Check past bills
+                </span>
+                <span style={{ color: "#667085", fontSize: 14, lineHeight: 1.4 }}>
+                  Find past overpayments and possible refunds from old claims and payments.
+                </span>
               </Link>
               <Link
                 href="/dashboard?view=future"
+                data-testid="home-track-new-visit"
+                onClick={(event) => handleViewLinkClick(event, "future")}
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderRadius: 999,
-                  border: "1px solid #dbe4ef",
+                  display: "grid",
+                  gap: 14,
+                  textAlign: "left",
+                  borderRadius: 22,
+                  border: "1px solid #cfe0e8",
                   background: "#ffffff",
                   color: "#152235",
-                  padding: "18px 32px",
-                  minWidth: 228,
-                  fontWeight: 700,
-                  fontSize: 18,
+                  padding: "18px 20px",
+                  width: 292,
+                  minHeight: 112,
                   cursor: "pointer",
-                  boxShadow: "0 14px 28px rgba(18, 33, 58, 0.05)",
+                  boxShadow: "0 14px 28px rgba(18, 33, 58, 0.08)",
                   textDecoration: "none",
                 }}
               >
-                Track a new visit
+                <span
+                  style={{
+                    justifySelf: "start",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minWidth: 134,
+                    borderRadius: 999,
+                    background: "#152235",
+                    color: "#ffffff",
+                    padding: "8px 12px",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    lineHeight: 1,
+                  }}
+                >
+                  Track a new visit
+                </span>
+                <span style={{ color: "#667085", fontSize: 14, lineHeight: 1.4 }}>
+                  Log new visits so OweMe can remind you when the EOB should arrive.
+                </span>
               </Link>
             </div>
 
@@ -1180,9 +1628,21 @@ export function DashboardShell({
               <span style={{ color: "#667085", fontSize: 16 }}>across {providerCount || 0} providers</span>
             </div>
 
-            <p style={{ margin: 0, color: "#98a2b3", fontSize: 15 }}>
-              No account. No bank connection. No insurance API.
-            </p>
+            {flashMessage ? (
+              <div
+                style={{
+                  borderRadius: 999,
+                  border: "1px solid #b9e6df",
+                  background: "#effbf8",
+                  color: "#0f766d",
+                  padding: "10px 16px",
+                  fontSize: 14,
+                  fontWeight: 700,
+                }}
+              >
+                {flashMessage}
+              </div>
+            ) : null}
           </section>
         </div>
       </main>
@@ -1244,6 +1704,7 @@ export function DashboardShell({
                 <Link
                   key={view.key}
                   href={viewHref(view.key)}
+                  onClick={(event) => handleViewLinkClick(event, view.key)}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -1272,6 +1733,24 @@ export function DashboardShell({
         </aside>
 
         <div style={{ padding: 28, display: "grid", gap: 22 }}>
+          <header style={{ display: "flex", justifyContent: "flex-end", alignItems: "center" }}>
+            {accountMenu()}
+          </header>
+          {flashMessage ? (
+            <div
+              style={{
+                borderRadius: 16,
+                border: "1px solid #b9e6df",
+                background: "#effbf8",
+                color: "#0f766d",
+                padding: "14px 16px",
+                fontSize: 14,
+                fontWeight: 700,
+              }}
+            >
+              {flashMessage}
+            </div>
+          ) : null}
           {renderView(
             "overview",
             activeView,
@@ -1279,24 +1758,12 @@ export function DashboardShell({
               <div style={{ padding: 32, display: "grid", gap: 24 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
                   <div style={{ display: "grid", gap: 12, maxWidth: 720 }}>
-                    <p
-                      style={{
-                        margin: 0,
-                        color: "#0b7a75",
-                        fontSize: 13,
-                        fontWeight: 800,
-                        letterSpacing: "0.14em",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      Medical credits can hide in plain sight
-                    </p>
                     <h1 style={{ margin: 0, fontSize: 56, lineHeight: 0.96, color: "#152235" }}>
-                      Who still owes you?
+                      Choose how OweMe helps today
                     </h1>
                     <p style={{ margin: 0, color: "#617086", fontSize: 19, lineHeight: 1.55 }}>
-                      Medical bills settle weeks after you pay. OweMe helps you find provider
-                      credits and remember when to check claims.
+                      OweMe compares what you paid with what insurance says you owe, then flags
+                      credits, refunds, and visits to follow up.
                     </p>
                   </div>
                   <div
@@ -1325,40 +1792,78 @@ export function DashboardShell({
                   <Link
                     href="/dashboard?view=past"
                     style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      borderRadius: 18,
-                      border: "none",
-                      background: "#152235",
-                      color: "#ffffff",
-                      padding: "16px 22px",
-                      fontWeight: 700,
-                      fontSize: 16,
-                      cursor: "pointer",
-                      textDecoration: "none",
-                    }}
-                  >
-                    Check past bills
-                  </Link>
-                  <Link
-                    href="/dashboard?view=future"
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
+                      display: "grid",
+                      gap: 14,
                       borderRadius: 18,
                       border: "1px solid #d9e3ef",
                       background: "#ffffff",
                       color: "#152235",
-                      padding: "16px 22px",
-                      fontWeight: 700,
-                      fontSize: 16,
+                      padding: "16px 18px",
+                      width: 280,
                       cursor: "pointer",
+                      boxShadow: "0 12px 24px rgba(18, 33, 58, 0.06)",
                       textDecoration: "none",
                     }}
                   >
-                    Track a new visit
+                    <span
+                      style={{
+                        justifySelf: "start",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        minWidth: 134,
+                        borderRadius: 999,
+                        background: "#152235",
+                        color: "#ffffff",
+                        padding: "8px 12px",
+                        fontSize: 13,
+                        fontWeight: 800,
+                        lineHeight: 1,
+                      }}
+                    >
+                      Check past bills
+                    </span>
+                    <span style={{ color: "#617086", fontSize: 13, lineHeight: 1.4 }}>
+                      Find past overpayments and possible refunds from old claims and payments.
+                    </span>
+                  </Link>
+                  <Link
+                    href="/dashboard?view=future"
+                    style={{
+                      display: "grid",
+                      gap: 14,
+                      borderRadius: 18,
+                      border: "1px solid #d9e3ef",
+                      background: "#ffffff",
+                      color: "#152235",
+                      padding: "16px 18px",
+                      width: 280,
+                      cursor: "pointer",
+                      boxShadow: "0 12px 24px rgba(18, 33, 58, 0.06)",
+                      textDecoration: "none",
+                    }}
+                  >
+                    <span
+                      style={{
+                        justifySelf: "start",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        minWidth: 134,
+                        borderRadius: 999,
+                        background: "#152235",
+                        color: "#ffffff",
+                        padding: "8px 12px",
+                        fontSize: 13,
+                        fontWeight: 800,
+                        lineHeight: 1,
+                      }}
+                    >
+                      Track a new visit
+                    </span>
+                    <span style={{ color: "#617086", fontSize: 13, lineHeight: 1.4 }}>
+                      Log new visits so OweMe can remind you when the EOB should arrive.
+                    </span>
                   </Link>
                 </div>
 
@@ -1412,7 +1917,7 @@ export function DashboardShell({
               {surface(
                 <div style={{ padding: 28, display: "grid", gap: 22 }}>
                   {sectionHeading(
-                    "Past Credits",
+                    "",
                     "Check old bills",
                     "Match what you paid against what insurance says you owe.",
                   )}
@@ -1457,22 +1962,6 @@ export function DashboardShell({
                     >
                       {isRunningAudit ? "Running..." : "Run audit"}
                     </button>
-                        <button
-                      type="button"
-                      style={{
-                        borderRadius: 18,
-                        border: "1px solid #dbe4ef",
-                        background: "#ffffff",
-                        color: "#152235",
-                        padding: "16px 24px",
-                        fontWeight: 700,
-                        fontSize: 16,
-                        cursor: "pointer",
-                      }}
-                      onClick={handleUseSample}
-                    >
-                      Use sample
-                    </button>
                     <span style={{ color: "#617086", fontSize: 16 }}>
                       {pastAuditStatus ||
                         (selectedUploads.claim.length || selectedUploads.payment.length
@@ -1485,240 +1974,166 @@ export function DashboardShell({
                     style={{
                       borderRadius: 22,
                       border: "1px dashed #cbd8e6",
-                      padding: 20,
+                      padding: isManualFallbackOpen ? 20 : "14px 18px",
                       display: "grid",
-                      gap: 14,
+                      gap: isManualFallbackOpen ? 14 : 0,
                       background: "#fbfdff",
                     }}
                   >
-                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                      <strong style={{ fontSize: 18 }}>Manual fallback</strong>
-                      <span style={{ color: "#617086" }}>
-                        Add one row per EOB amount or allocated payment when a PDF needs OCR.
-                      </span>
-                    </div>
-                    <div
+                    <button
+                      type="button"
+                      data-testid="manual-fallback-toggle"
+                      onClick={() => setIsManualFallbackOpen((current) => !current)}
+                      aria-expanded={isManualFallbackOpen}
                       style={{
-                        display: "grid",
-                        gridTemplateColumns: "220px 1fr 220px 180px 140px",
-                        gap: 12,
+                        border: "none",
+                        background: "transparent",
+                        padding: 0,
+                        display: "flex",
+                        gap: 10,
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        color: "#152235",
                       }}
                     >
-                      <select
-                        value={manualFallbackDraft.paymentSource}
-                        onChange={(event) =>
-                          setManualFallbackDraft((current) => ({
-                            ...current,
-                            paymentSource: event.target.value,
-                          }))
-                        }
+                      <span style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                        <strong style={{ fontSize: 18 }}>Manual fallback</strong>
+                        <span style={{ color: "#617086" }}>
+                        Add one row per EOB amount or allocated payment when a PDF needs OCR.
+                        </span>
+                      </span>
+                      <span style={{ color: "#0f766d", fontSize: 14, fontWeight: 800 }}>
+                        {isManualFallbackOpen ? "Hide" : "Add manually"}
+                      </span>
+                    </button>
+                    {isManualFallbackOpen ? (
+                      <div
                         style={{
-                          borderRadius: 16,
-                          border: "1px solid #dbe4ef",
-                          background: "#ffffff",
-                          padding: "16px 18px",
-                          color: "#152235",
-                          fontWeight: 600,
-                          fontSize: 15,
+                          display: "grid",
+                          gridTemplateColumns: "220px 1fr 220px 180px 140px",
+                          gap: 12,
                         }}
                       >
-                        <option value="Receipt">Payment / receipt</option>
-                        <option value="Provider statement">Provider statement</option>
-                        <option value="Card statement">Card statement</option>
-                      </select>
-                      <input
-                        value={manualFallbackDraft.providerName}
-                        onChange={(event) =>
-                          setManualFallbackDraft((current) => ({
-                            ...current,
-                            providerName: event.target.value,
-                          }))
-                        }
-                        placeholder="Provider or clinic"
-                        style={{
-                          borderRadius: 16,
-                          border: "1px solid #dbe4ef",
-                          background: "#ffffff",
-                          padding: "16px 18px",
-                          color: "#152235",
-                          fontWeight: 500,
-                          fontSize: 15,
-                        }}
-                      />
-                      <input
-                        type="date"
-                        value={manualFallbackDraft.paymentDate}
-                        onChange={(event) =>
-                          setManualFallbackDraft((current) => ({
-                            ...current,
-                            paymentDate: event.target.value,
-                          }))
-                        }
-                        style={{
-                          borderRadius: 16,
-                          border: "1px solid #dbe4ef",
-                          background: "#ffffff",
-                          padding: "16px 18px",
-                          color: manualFallbackDraft.paymentDate ? "#152235" : "#7a8599",
-                          fontWeight: 600,
-                          fontSize: 15,
-                        }}
-                      />
-                      <input
-                        inputMode="decimal"
-                        value={manualFallbackDraft.amount}
-                        onChange={(event) =>
-                          setManualFallbackDraft((current) => ({
-                            ...current,
-                            amount: event.target.value,
-                          }))
-                        }
-                        placeholder="Amount"
-                        style={{
-                          borderRadius: 16,
-                          border: "1px solid #dbe4ef",
-                          background: "#ffffff",
-                          padding: "16px 18px",
-                          color: "#152235",
-                          fontWeight: 600,
-                          fontSize: 15,
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAddManualFallback}
-                        style={{
-                          borderRadius: 16,
-                          border: "1px solid #dbe4ef",
-                          background: "#ffffff",
-                          padding: "16px 18px",
-                          color: "#152235",
-                          fontWeight: 700,
-                          fontSize: 15,
-                          cursor: "pointer",
-                        }}
-                      >
-                        {isSavingManualFallback ? "Saving..." : "Add row"}
-                      </button>
-                    </div>
+                        <select
+                          value={manualFallbackDraft.paymentSource}
+                          onChange={(event) =>
+                            setManualFallbackDraft((current) => ({
+                              ...current,
+                              paymentSource: event.target.value,
+                            }))
+                          }
+                          style={{
+                            borderRadius: 16,
+                            border: "1px solid #dbe4ef",
+                            background: "#ffffff",
+                            padding: "16px 18px",
+                            color: "#152235",
+                            fontWeight: 600,
+                            fontSize: 15,
+                          }}
+                        >
+                          <option value="Receipt">Payment / receipt</option>
+                          <option value="Provider statement">Provider statement</option>
+                          <option value="Card statement">Card statement</option>
+                        </select>
+                        <input
+                          value={manualFallbackDraft.providerName}
+                          onChange={(event) =>
+                            setManualFallbackDraft((current) => ({
+                              ...current,
+                              providerName: event.target.value,
+                            }))
+                          }
+                          placeholder="Provider or clinic"
+                          style={{
+                            borderRadius: 16,
+                            border: "1px solid #dbe4ef",
+                            background: "#ffffff",
+                            padding: "16px 18px",
+                            color: "#152235",
+                            fontWeight: 500,
+                            fontSize: 15,
+                          }}
+                        />
+                        <input
+                          type="date"
+                          value={manualFallbackDraft.paymentDate}
+                          onChange={(event) =>
+                            setManualFallbackDraft((current) => ({
+                              ...current,
+                              paymentDate: event.target.value,
+                            }))
+                          }
+                          style={{
+                            borderRadius: 16,
+                            border: "1px solid #dbe4ef",
+                            background: "#ffffff",
+                            padding: "16px 18px",
+                            color: manualFallbackDraft.paymentDate ? "#152235" : "#7a8599",
+                            fontWeight: 600,
+                            fontSize: 15,
+                          }}
+                        />
+                        <input
+                          inputMode="decimal"
+                          value={manualFallbackDraft.amount}
+                          onChange={(event) =>
+                            setManualFallbackDraft((current) => ({
+                              ...current,
+                              amount: event.target.value,
+                            }))
+                          }
+                          placeholder="Amount"
+                          style={{
+                            borderRadius: 16,
+                            border: "1px solid #dbe4ef",
+                            background: "#ffffff",
+                            padding: "16px 18px",
+                            color: "#152235",
+                            fontWeight: 600,
+                            fontSize: 15,
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddManualFallback}
+                          style={{
+                            borderRadius: 16,
+                            border: "1px solid #dbe4ef",
+                            background: "#ffffff",
+                            padding: "16px 18px",
+                            color: "#152235",
+                            fontWeight: 700,
+                            fontSize: 15,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {isSavingManualFallback ? "Saving..." : "Add row"}
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 </div>,
               )}
 
               {surface(
                 <div style={{ padding: 28, display: "grid", gap: 20 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-                    <div style={{ display: "grid", gap: 8 }}>
-                      <p
-                        style={{
-                          margin: 0,
-                          color: "#0b7a75",
-                          fontSize: 13,
-                          fontWeight: 800,
-                          letterSpacing: "0.14em",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        Audit result
-                      </p>
-                      <h3 style={{ margin: 0, fontSize: 46, lineHeight: 1, color: "#152235" }}>
-                        <span style={{ color: "#117a72" }}>{formatCurrency(totalPossibleCredit)}</span> possible
-                        {" "}credits found
-                      </h3>
-                      <p style={{ margin: 0, color: "#617086", fontSize: 16 }}>
-                        {findingItems.length
-                          ? `${findingItems.length} review item${findingItems.length === 1 ? "" : "s"} currently tracked.`
-                          : "Run an audit to see possible provider credits."}
-                      </p>
-                    </div>
-                    <Link
-                      href="/dashboard?view=actions"
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        alignSelf: "center",
-                        borderRadius: 18,
-                        border: "none",
-                        background: "#117a72",
-                        color: "#ffffff",
-                        padding: "16px 22px",
-                        fontWeight: 700,
-                        fontSize: 16,
-                        cursor: "pointer",
-                        textDecoration: "none",
-                      }}
-                    >
-                      Review next steps
-                    </Link>
-                  </div>
+                  <h3 style={{ margin: 0, fontSize: 30, lineHeight: 1.1, color: "#152235" }}>
+                    <span style={{ color: "#117a72" }}>{formatCurrency(totalPossibleCredit)}</span> possible
+                    {" "}credits found
+                  </h3>
 
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14 }}>
-                    {[
-                      ["Matched confidently", matchSummary.matchedConfidently, "#0f766d", "#def4f1"],
-                      ["Need review", matchSummary.needReview, "#b56411", "#fff1df"],
-                      ["Unexplained payments", matchSummary.unexplainedPayments, "#64748b", "#f3f6fb"],
-                      ["Possible credits", matchSummary.possibleCredits, "#0f766d", "#e8fbf6"],
-                    ].map(([label, value, color, background]) => (
-                      <div
-                        key={String(label)}
-                        style={{
-                          borderRadius: 18,
-                          border: "1px solid #dbe4ef",
-                          background: "#ffffff",
-                          padding: 18,
-                          display: "grid",
-                          gap: 8,
-                        }}
-                      >
-                        <span style={{ color: "#617086", fontSize: 13, fontWeight: 700 }}>{label}</span>
-                        <strong style={{ fontSize: 30, lineHeight: 1, color: String(color) }}>{value}</strong>
-                        <span
-                          style={{
-                            display: "inline-flex",
-                            width: "fit-content",
-                            padding: "6px 10px",
-                            borderRadius: 999,
-                            background: String(background),
-                            color: String(color),
-                            fontSize: 12,
-                            fontWeight: 700,
-                          }}
-                        >
-                          current run
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    {[
-                      ["all", "All"],
-                      ["review", "Need review"],
-                      ["credit", "Possible credits"],
-                      ["unexplained", "Unexplained payments"],
-                    ].map(([key, label]) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => setMatchFilter(key as MatchFilterKey)}
-                        style={{
-                          borderRadius: 999,
-                          border: matchFilter === key ? "1px solid #117a72" : "1px solid #dbe4ef",
-                          background: matchFilter === key ? "#def4f1" : "#ffffff",
-                          color: matchFilter === key ? "#0f766d" : "#617086",
-                          padding: "10px 14px",
-                          fontSize: 13,
-                          fontWeight: 700,
-                          cursor: "pointer",
-                        }}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 18, alignItems: "start" }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: selectedFinding ? "1.15fr 0.85fr" : "1fr",
+                      gap: 18,
+                      alignItems: "start",
+                    }}
+                  >
                     {surface(
                       <div style={{ padding: 22, display: "grid", gap: 14 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
@@ -1733,12 +2148,23 @@ export function DashboardShell({
                             const details = findingDetails(finding);
                             const findingType = String(finding.finding_type ?? "");
                             const isSelected = selectedFinding && String(selectedFinding.id) === String(finding.id);
+                            const isUnassignedPayment = findingType === "unassigned_medical_payment";
+                            const candidates = candidatePayments(finding);
+                            const primaryCandidate = candidates[0];
+                            const hasMultipleCandidates = candidates.length > 1;
+                            const creditAmount = parseAmount(details.credit_amount);
 
                             return (
                               <button
                                 key={String(finding.id)}
                                 type="button"
-                                onClick={() => setSelectedFindingId(String(finding.id))}
+                                data-testid={`review-finding-${String(finding.id)}`}
+                                onClick={() => {
+                                  setSelectedFindingId(String(finding.id));
+                                  setFindingActionStatus("");
+                                  setCreditReviewMode("combined");
+                                  setCreditReviewDraft(null);
+                                }}
                                 style={{
                                   textAlign: "left",
                                   border: isSelected ? "1px solid #7ccfc6" : "1px solid #e3ebf4",
@@ -1753,44 +2179,184 @@ export function DashboardShell({
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
                                   <div style={{ display: "grid", gap: 6 }}>
                                     <strong style={{ fontSize: 18, color: "#152235" }}>
-                                      {detailText(
-                                        details.provider_name ?? finding.provider_name ?? finding.title,
-                                        "Provider under review",
-                                      )}
+                                      {findingProviderName(finding)}
                                     </strong>
                                     <span style={{ color: "#617086", fontSize: 14 }}>
-                                      Visit {detailText(details.service_date, "date not recorded")}
+                                      {isUnassignedPayment
+                                        ? `Payment ${detailText(details.payment_date, "date not recorded")}`
+                                        : `Visit ${detailText(details.service_date, "date not recorded")}`}
                                     </span>
                                   </div>
                                   {pill(findingStatusLabel(finding), findingStatusTone(findingType))}
                                 </div>
-                                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+                                {creditAmount > 0 ? (
+                                  <div
+                                    aria-label={`Possible credit ${formatCurrency(creditAmount)}`}
+                                    style={{
+                                      borderRadius: 16,
+                                      background: "linear-gradient(135deg, #0f766d, #13a092)",
+                                      color: "#ffffff",
+                                      padding: "12px 14px",
+                                      display: "flex",
+                                      justifyContent: "space-between",
+                                      gap: 12,
+                                      alignItems: "center",
+                                    }}
+                                  >
+                                    <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.02em" }}>
+                                      Possible credit
+                                    </span>
+                                    <strong style={{ fontSize: 24, lineHeight: 1 }}>
+                                      {formatCurrency(creditAmount)}
+                                    </strong>
+                                  </div>
+                                ) : null}
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
                                   <div style={{ display: "grid", gap: 4 }}>
-                                    <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 700 }}>EOB says you owe</span>
-                                    <strong style={{ fontSize: 16 }}>{detailText(details.responsibility_amount, "--")}</strong>
+                                    <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 700 }}>
+                                      {isUnassignedPayment ? "Possible visits" : "EOB says you owe"}
+                                    </span>
+                                    <strong style={{ fontSize: 16 }}>
+                                      {isUnassignedPayment ? `${possibleClaims(finding).length}` : detailText(details.responsibility_amount, "--")}
+                                    </strong>
                                   </div>
                                   <div style={{ display: "grid", gap: 4 }}>
-                                    <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 700 }}>Paid amount found</span>
-                                    <strong style={{ fontSize: 16 }}>{detailText(details.paid_amount, "--")}</strong>
+                                    <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 700 }}>
+                                      {isUnassignedPayment
+                                        ? "You paid"
+                                        : hasMultipleCandidates
+                                          ? "Candidate payments"
+                                          : primaryCandidate && !details.paid_amount
+                                          ? "Candidate payment"
+                                          : "You paid"}
+                                    </span>
+                                    <strong style={{ fontSize: 16 }}>
+                                      {hasMultipleCandidates
+                                        ? `${candidates.length} possible`
+                                        : detailText(details.paid_amount ?? primaryCandidate?.amount, "--")}
+                                    </strong>
                                   </div>
                                   <div style={{ display: "grid", gap: 4 }}>
-                                    <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 700 }}>System read</span>
-                                    <strong style={{ fontSize: 16 }}>{findingStatusLabel(finding)}</strong>
+                                    <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 700 }}>
+                                      Payment method
+                                    </span>
+                                    <strong style={{ fontSize: 16 }}>
+                                      {hasMultipleCandidates
+                                        ? candidatePaymentSourceSummary(candidates)
+                                        : paymentMethodText(details.payment_source ?? primaryCandidate?.payment_source_label ?? primaryCandidate?.payment_source)}
+                                    </strong>
+                                  </div>
+                                  <div style={{ display: "grid", gap: 4 }}>
+                                    <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 700 }}>
+                                      {creditAmount > 0 ? "Possible credit" : "Review status"}
+                                    </span>
+                                    <strong style={{ fontSize: 16 }}>
+                                      {creditAmount > 0 ? formatCurrency(creditAmount) : findingStatusLabel(finding)}
+                                    </strong>
                                   </div>
                                 </div>
-                                <span style={{ color: "#617086", lineHeight: 1.5 }}>
-                                  {String(finding.summary ?? "Review this item and confirm whether action is needed.")}
-                                </span>
                               </button>
                             );
                           })
                         ) : (
-                          <div style={{ color: "#617086" }}>No findings in this filter yet.</div>
+                          <div
+                            style={{
+                              position: "relative",
+                              overflow: "hidden",
+                              borderRadius: 22,
+                              border: "1px solid #dbe4ef",
+                              background:
+                                "linear-gradient(135deg, rgba(248,251,255,0.95), rgba(232,251,246,0.72))",
+                              padding: 24,
+                              display: "grid",
+                              gridTemplateColumns: "minmax(0, 1fr) auto",
+                              gap: 22,
+                              alignItems: "center",
+                            }}
+                          >
+                            <div
+                              style={{
+                                position: "absolute",
+                                right: -46,
+                                top: -52,
+                                width: 160,
+                                height: 160,
+                                borderRadius: "50%",
+                                background: "rgba(17, 122, 114, 0.08)",
+                              }}
+                            />
+                            <div style={{ position: "relative", display: "grid", gap: 10 }}>
+                              <span
+                                style={{
+                                  color: "#0b7a75",
+                                  fontSize: 12,
+                                  fontWeight: 900,
+                                  letterSpacing: "0.12em",
+                                  textTransform: "uppercase",
+                                }}
+                              >
+                                Ready for a clean audit
+                              </span>
+                              <strong style={{ color: "#152235", fontSize: 26, lineHeight: 1.1 }}>
+                                No review items yet.
+                              </strong>
+                              <span style={{ maxWidth: 620, color: "#617086", fontSize: 15, lineHeight: 1.55 }}>
+                                Upload a claim/EOB file plus a payment file, then run audit. OweMe will show exact matches,
+                                possible credits, and anything that needs confirmation.
+                              </span>
+                            </div>
+                            <div
+                              style={{
+                                position: "relative",
+                                display: "grid",
+                                gap: 8,
+                                minWidth: 220,
+                              }}
+                            >
+                              {[
+                                ["1", "Claims / EOB"],
+                                ["2", "HSA or card file"],
+                                ["3", "Run audit"],
+                              ].map(([step, label]) => (
+                                <div
+                                  key={step}
+                                  style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "28px 1fr",
+                                    gap: 10,
+                                    alignItems: "center",
+                                    borderRadius: 14,
+                                    background: "#ffffff",
+                                    border: "1px solid #dbe4ef",
+                                    padding: "10px 12px",
+                                    boxShadow: "0 10px 22px rgba(18, 33, 58, 0.05)",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      width: 28,
+                                      height: 28,
+                                      borderRadius: 999,
+                                      background: "#def4f1",
+                                      color: "#0f766d",
+                                      display: "grid",
+                                      placeItems: "center",
+                                      fontSize: 13,
+                                      fontWeight: 900,
+                                    }}
+                                  >
+                                    {step}
+                                  </span>
+                                  <strong style={{ color: "#152235", fontSize: 14 }}>{label}</strong>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         )}
                       </div>,
                     )}
 
-                    {surface(
+                    {selectedFinding ? surface(
                       <div style={{ padding: 22, display: "grid", gap: 16 }}>
                         <div style={{ display: "grid", gap: 6 }}>
                           <p
@@ -1805,15 +2371,422 @@ export function DashboardShell({
                           >
                             Selected visit
                           </p>
-                          <h3 style={{ margin: 0, fontSize: 22 }}>Match evidence</h3>
+                          <h3 style={{ margin: 0, fontSize: 22 }}>{findingProviderName(selectedFinding)}</h3>
+                          <span style={{ color: "#617086", fontSize: 14 }}>
+                            Service date: {detailText(findingDetails(selectedFinding).service_date, "Date to confirm")}
+                          </span>
                         </div>
                         {selectedFinding ? (
                           <>
+                            {selectedProviderFindings.length > 1 && String(selectedFinding.finding_type ?? "") !== "possible_credit" ? (
+                              <div
+                                style={{
+                                  borderRadius: 18,
+                                  border: "1px solid #b9e6df",
+                                  background: "#f3fffc",
+                                  padding: 16,
+                                  display: "grid",
+                                  gap: 12,
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                                  <strong style={{ fontSize: 16, color: "#152235" }}>
+                                    {findingProviderName(selectedFinding)} payment picture
+                                  </strong>
+                                  {pill(`${selectedProviderFindings.length} visits`, "teal")}
+                                </div>
+                                <div style={{ display: "grid", gap: 10 }}>
+                                  {selectedProviderFindings.map((providerFinding) => {
+                                    const providerDetails = findingDetails(providerFinding);
+                                    const providerCandidates = candidatePayments(providerFinding);
+                                    const isCurrent = String(providerFinding.id) === String(selectedFinding.id);
+                                    const candidate = providerCandidates[0];
+                                    const potentialCredit = candidatePotentialCredit(providerFinding, candidate);
+
+                                    return (
+                                      <button
+                                        key={String(providerFinding.id)}
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedFindingId(String(providerFinding.id));
+                                          setFindingActionStatus("");
+                                        }}
+                                        style={{
+                                          textAlign: "left",
+                                          border: isCurrent ? "1px solid #7ccfc6" : "1px solid #d8eee9",
+                                          borderRadius: 14,
+                                          background: isCurrent ? "#ffffff" : "rgba(255,255,255,0.68)",
+                                          padding: 12,
+                                          display: "grid",
+                                          gap: 6,
+                                          cursor: "pointer",
+                                        }}
+                                      >
+                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                                          <strong style={{ color: "#152235", fontSize: 14 }}>
+                                            Visit {detailText(providerDetails.service_date, "date unknown")}
+                                          </strong>
+                                          <span style={{ color: "#0f766d", fontSize: 13, fontWeight: 800 }}>
+                                            {findingStatusLabel(providerFinding)}
+                                          </span>
+                                        </div>
+                                        <span style={{ color: "#617086", fontSize: 13, lineHeight: 1.45 }}>
+                                          EOB {detailText(providerDetails.responsibility_amount, "--")}
+                                          {providerDetails.paid_amount
+                                            ? ` · paid ${detailText(providerDetails.paid_amount)}`
+                                            : candidate
+                                              ? ` · candidate ${detailText(candidate.amount)} on ${detailText(candidate.payment_date, "date unknown")}`
+                                              : " · no payment found yet"}
+                                          {providerDetails.credit_amount
+                                            ? ` · possible credit ${detailText(providerDetails.credit_amount)}`
+                                            : potentialCredit > 0
+                                              ? ` · potential credit ${potentialCredit.toFixed(2)}`
+                                            : ""}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : null}
+                            {selectedCreditFindings.length > 1 ? (
+                              <div
+                                style={{
+                                  borderRadius: 18,
+                                  border: "1px solid #b9e6df",
+                                  padding: 16,
+                                  display: "grid",
+                                  gap: 14,
+                                  background: "#fbfffe",
+                                }}
+                              >
+                                <div style={{ display: "grid", gap: 5 }}>
+                                  <strong style={{ fontSize: 16 }}>
+                                    {creditReviewMode === "combined" ? "Combined review" : "Separate review"} for {findingProviderName(selectedFinding)}
+                                  </strong>
+                                  <span style={{ color: "#385b64", lineHeight: 1.45 }}>
+                                    {selectedCreditFindings.length} visits · Total possible credit {formatCurrency(selectedCreditTotal)}
+                                  </span>
+                                </div>
+                                <div style={{ display: "grid", gap: 8 }}>
+                                  {selectedCreditFindings.map((finding) => {
+                                    const details = findingDetails(finding);
+                                    const responsibility = parseAmount(details.responsibility_amount);
+                                    const paid = parseAmount(details.paid_amount);
+                                    const difference = findingCreditAmount(finding);
+                                    return (
+                                      <div
+                                        key={String(finding.id)}
+                                        style={{
+                                          borderRadius: 14,
+                                          border: "1px solid #e3ebf4",
+                                          background: "#ffffff",
+                                          padding: 12,
+                                          display: "grid",
+                                          gridTemplateColumns: "1.15fr repeat(3, minmax(0, 1fr))",
+                                          gap: 10,
+                                          alignItems: "center",
+                                        }}
+                                      >
+                                        <div style={{ display: "grid", gap: 3 }}>
+                                          <span style={{ color: "#7b879b", fontSize: 11, fontWeight: 700 }}>Service date</span>
+                                          <strong style={{ fontSize: 14 }}>{formatVisitDate(details.service_date)}</strong>
+                                        </div>
+                                        <div style={{ display: "grid", gap: 3 }}>
+                                          <span style={{ color: "#7b879b", fontSize: 11, fontWeight: 700 }}>EOB responsibility</span>
+                                          <strong style={{ fontSize: 14 }}>{formatCurrency(responsibility)}</strong>
+                                        </div>
+                                        <div style={{ display: "grid", gap: 3 }}>
+                                          <span style={{ color: "#7b879b", fontSize: 11, fontWeight: 700 }}>Matched payment</span>
+                                          <strong style={{ fontSize: 14 }}>{formatCurrency(paid)}</strong>
+                                        </div>
+                                        <div style={{ display: "grid", gap: 3 }}>
+                                          <span style={{ color: "#7b879b", fontSize: 11, fontWeight: 700 }}>Difference</span>
+                                          <strong style={{ fontSize: 14, color: "#117a72" }}>{formatCurrency(difference)}</strong>
+                                        </div>
+                                        {creditReviewMode === "separate" ? (
+                                          <button
+                                            type="button"
+                                            data-testid={`request-separate-${String(finding.id)}`}
+                                            onClick={() => handleSeparateCreditReview(finding)}
+                                            disabled={isSavingFindingAction}
+                                            style={{
+                                              gridColumn: "1 / -1",
+                                              borderRadius: 10,
+                                              border: "1px solid #b9e6df",
+                                              background: "#f4fbfa",
+                                              color: "#0f766d",
+                                              padding: "9px 11px",
+                                              fontSize: 13,
+                                              fontWeight: 700,
+                                              cursor: "pointer",
+                                            }}
+                                          >
+                                            Request {formatCurrency(difference)} credit/refund review
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                {creditReviewMode === "combined" ? (
+                                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                                    <button
+                                      type="button"
+                                      data-testid="request-combined-refund-review"
+                                      onClick={handleCombinedCreditReview}
+                                      disabled={isSavingFindingAction}
+                                      style={{
+                                        borderRadius: 14,
+                                        border: "none",
+                                        background: "#117a72",
+                                        color: "#ffffff",
+                                        padding: "13px 14px",
+                                        fontSize: 14,
+                                        fontWeight: 700,
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      Request combined refund review
+                                    </button>
+                                    <button
+                                      type="button"
+                                      data-testid="request-separately"
+                                      onClick={() => {
+                                        setCreditReviewMode("separate");
+                                        setCreditReviewDraft(null);
+                                        setFindingActionStatus("Separate review mode: choose a visit below to request its amount.");
+                                      }}
+                                      disabled={isSavingFindingAction}
+                                      style={{
+                                        borderRadius: 14,
+                                        border: "1px solid #dbe4ef",
+                                        background: "#ffffff",
+                                        color: "#152235",
+                                        padding: "13px 14px",
+                                        fontSize: 14,
+                                        fontWeight: 700,
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      Request separately
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    data-testid="back-to-combined-review"
+                                    onClick={() => {
+                                      setCreditReviewMode("combined");
+                                      setCreditReviewDraft(null);
+                                      setFindingActionStatus("Combined review mode restored.");
+                                    }}
+                                    style={{
+                                      borderRadius: 14,
+                                      border: "1px solid #b9e6df",
+                                      background: "#f4fbfa",
+                                      color: "#0f766d",
+                                      padding: "13px 14px",
+                                      fontSize: 14,
+                                      fontWeight: 700,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Back to combined review
+                                  </button>
+                                )}
+                              </div>
+                            ) : null}
+                            <div
+                              style={{
+                                borderRadius: 18,
+                                border: "1px solid #dbe4ef",
+                                background: "#fbfdff",
+                                padding: 16,
+                                display: "grid",
+                                gap: 8,
+                              }}
+                            >
+                              <strong style={{ fontSize: 16 }}>Why this may be a credit/refund</strong>
+                              <span style={{ color: "#617086", lineHeight: 1.45 }}>
+                                {whyOwedText(selectedFinding)}
+                              </span>
+                            </div>
+                            <div
+                              style={{
+                                borderRadius: 18,
+                                border: "1px solid #cfe0e8",
+                                background: "#f8fbff",
+                                padding: 16,
+                                display: "grid",
+                                gap: 12,
+                              }}
+                            >
+                              <strong style={{ fontSize: 16 }}>Records to check</strong>
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                                <div style={{ display: "grid", gap: 6 }}>
+                                  <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 800 }}>
+                                    Insurance / EOB
+                                  </span>
+                                  <span style={{ color: "#617086" }}>
+                                    Claim provider read: {detailText(stripDemoSuffix(findingDetails(selectedFinding).claim_provider_name ?? findingDetails(selectedFinding).provider_name ?? selectedFinding.provider_name), "Provider to confirm")}
+                                  </span>
+                                  <span style={{ color: "#617086" }}>
+                                    Service date: {detailText(findingDetails(selectedFinding).service_date, "Date to confirm")}
+                                  </span>
+                                  <span style={{ color: "#617086" }}>
+                                    Patient responsibility: {detailText(findingDetails(selectedFinding).responsibility_amount, "Amount to confirm")}
+                                  </span>
+                                </div>
+                                <div style={{ display: "grid", gap: 6 }}>
+                                  <span style={{ color: "#7b879b", fontSize: 12, fontWeight: 800 }}>
+                                    {candidatePayments(selectedFinding).length > 1 ? "Payment candidates" : "Payment record"}
+                                  </span>
+                                  {candidatePayments(selectedFinding).length > 1 ? (
+                                    <>
+                                      <span style={{ color: "#617086" }}>
+                                        Candidates found: {candidatePayments(selectedFinding).length}
+                                      </span>
+                                      <span style={{ color: "#617086" }}>
+                                        Source/account: {candidatePaymentSourceSummary(candidatePayments(selectedFinding))}
+                                      </span>
+                                      <span style={{ color: "#617086" }}>
+                                        Review each candidate payment below before linking it to this visit.
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span style={{ color: "#617086" }}>
+                                        Payment method: {paymentMethodText(candidatePayments(selectedFinding)[0]?.payment_source_label ?? candidatePayments(selectedFinding)[0]?.payment_source ?? findingDetails(selectedFinding).payment_source)}
+                                      </span>
+                                      <span style={{ color: "#617086" }}>
+                                        Payment date: {detailText(candidatePayments(selectedFinding)[0]?.payment_date ?? findingDetails(selectedFinding).payment_date, "Date to confirm")}
+                                      </span>
+                                      <span style={{ color: "#617086" }}>
+                                        Amount: {detailText(candidatePayments(selectedFinding)[0]?.amount ?? findingDetails(selectedFinding).paid_amount, "Amount to confirm")}
+                                      </span>
+                                      <span style={{ color: "#617086" }}>
+                                        Recorded merchant/provider: {detailText(stripDemoSuffix(candidatePayments(selectedFinding)[0]?.provider_name ?? findingDetails(selectedFinding).payment_provider_name ?? findingDetails(selectedFinding).provider_name), "Merchant to confirm")}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                              <strong style={{ color: "#152235", fontSize: 14, lineHeight: 1.45 }}>
+                                {checkRecordsQuestion(selectedFinding)}
+                              </strong>
+                            </div>
+                            <div
+                              style={{
+                                borderRadius: 18,
+                                border: "1px solid #dbe4ef",
+                                background: "#ffffff",
+                                padding: 16,
+                                display: "grid",
+                                gap: 8,
+                              }}
+                            >
+                              <strong style={{ fontSize: 16 }}>Next step</strong>
+                              <span style={{ color: "#617086", lineHeight: 1.45 }}>
+                                {nextStepText(selectedFinding, {
+                                  mode: creditReviewMode,
+                                  findings: selectedCreditFindings,
+                                  total: selectedCreditTotal,
+                                })}
+                              </span>
+                            </div>
+                            {creditReviewDraft ? (
+                              <div
+                                data-testid="credit-review-draft"
+                                style={{
+                                  borderRadius: 18,
+                                  border: "1px solid #b9e6df",
+                                  background: "#f4fbfa",
+                                  padding: 16,
+                                  display: "grid",
+                                  gap: 8,
+                                }}
+                              >
+                                <strong style={{ fontSize: 16 }}>
+                                  {creditReviewDraft.mode === "combined" ? "Combined request draft ready" : "Separate request draft ready"}
+                                </strong>
+                                <span style={{ color: "#385b64", lineHeight: 1.45 }}>
+                                  {creditReviewDraft.provider} · {creditReviewDraft.visits.length} visit{creditReviewDraft.visits.length === 1 ? "" : "s"} · total {formatCurrency(creditReviewDraft.total)}
+                                </span>
+                                <div style={{ display: "grid", gap: 4 }}>
+                                  {creditReviewDraft.visits.map((visit) => (
+                                    <span key={visit.id} style={{ color: "#617086", lineHeight: 1.4 }}>
+                                      {formatVisitDate(visit.serviceDate)} · {formatCurrency(visit.difference)} possible credit
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                            {String(selectedFinding.finding_type ?? "") === "unassigned_medical_payment" ? (
+                              <>
+                                <div style={{ display: "grid", gap: 12 }}>
+                                  <div style={{ borderRadius: 18, border: "1px solid #e3ebf4", padding: 16, display: "grid", gap: 8 }}>
+                                    <strong style={{ fontSize: 16 }}>Bank statement payment</strong>
+                                    <span style={{ color: "#617086" }}>
+                                      Payment date: {detailText(findingDetails(selectedFinding).payment_date)}
+                                    </span>
+                                    <span style={{ color: "#617086" }}>
+                                      Amount found: {detailText(findingDetails(selectedFinding).paid_amount)}
+                                    </span>
+                                    <span style={{ color: "#617086" }}>
+                                      Payment method: {paymentMethodText(findingDetails(selectedFinding).payment_source, "Card / statement row")}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div style={{ borderRadius: 18, border: "1px solid #e3ebf4", padding: 16, display: "grid", gap: 10 }}>
+                                  <strong style={{ fontSize: 16 }}>Why this is still unassigned</strong>
+                                  <div style={{ display: "grid", gap: 8 }}>
+                                    {findingEvidenceBullets(selectedFinding).map((bullet) => (
+                                      <span key={bullet} style={{ color: "#617086", lineHeight: 1.45 }}>
+                                        {bullet}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                <div style={{ borderRadius: 18, border: "1px solid #e3ebf4", padding: 16, display: "grid", gap: 10 }}>
+                                  <strong style={{ fontSize: 16 }}>Possible visits to assign</strong>
+                                  <div style={{ display: "grid", gap: 10 }}>
+                                    {possibleClaims(selectedFinding).length ? (
+                                      possibleClaims(selectedFinding).map((claim) => (
+                                        <div
+                                          key={String(claim.provider_name ?? claim.service_date)}
+                                          style={{
+                                            borderRadius: 14,
+                                            background: "#fbfdff",
+                                            border: "1px solid #e8eef6",
+                                            padding: 14,
+                                            display: "grid",
+                                            gap: 6,
+                                          }}
+                                        >
+                                          <strong style={{ fontSize: 15, color: "#152235" }}>
+                                            {detailText(claim.provider_name, "Visit candidate")}
+                                          </strong>
+                                          <span style={{ color: "#617086" }}>
+                                            Visit {detailText(claim.service_date, "date unknown")} · EOB says you owe {detailText(claim.responsibility_amount, "--")}
+                                          </span>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <span style={{ color: "#617086" }}>No likely visits surfaced yet.</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </>
+                            ) : String(selectedFinding.finding_type ?? "") !== "possible_credit" ? (
+                              <>
                             <div style={{ display: "grid", gap: 12 }}>
                               <div style={{ borderRadius: 18, border: "1px solid #e3ebf4", padding: 16, display: "grid", gap: 8 }}>
                                 <strong style={{ fontSize: 16 }}>Claim / EOB</strong>
                                 <span style={{ color: "#617086" }}>
-                                  Provider: {detailText(findingDetails(selectedFinding).provider_name ?? selectedFinding.provider_name)}
+                                  Claim provider read: {detailText(stripDemoSuffix(findingDetails(selectedFinding).claim_provider_name ?? findingDetails(selectedFinding).provider_name ?? selectedFinding.provider_name))}
                                 </span>
                                 <span style={{ color: "#617086" }}>
                                   Service date: {detailText(findingDetails(selectedFinding).service_date)}
@@ -1829,7 +2802,7 @@ export function DashboardShell({
                                   Amount found: {detailText(findingDetails(selectedFinding).paid_amount, "No payment found yet")}
                                 </span>
                                 <span style={{ color: "#617086" }}>
-                                  Payment source: {detailText(findingDetails(selectedFinding).payment_source, "Card / receipt / manual entry pending")}
+                                  Payment method: {paymentMethodText(findingDetails(selectedFinding).payment_source)}
                                 </span>
                               </div>
                             </div>
@@ -1847,68 +2820,100 @@ export function DashboardShell({
 
                             {candidatePayments(selectedFinding).length > 0 ? (
                               <div style={{ borderRadius: 18, border: "1px solid #e3ebf4", padding: 16, display: "grid", gap: 10 }}>
-                                <strong style={{ fontSize: 16 }}>Closest payment candidates</strong>
+                                <strong style={{ fontSize: 16 }}>Payment candidates</strong>
                                 <div style={{ display: "grid", gap: 10 }}>
-                                  {candidatePayments(selectedFinding).map((candidate) => (
-                                    <div
-                                      key={String(candidate.payment_id ?? candidate.provider_name ?? candidate.amount)}
-                                      style={{
-                                        borderRadius: 14,
-                                        background: "#fbfdff",
-                                        border: "1px solid #e8eef6",
-                                        padding: 14,
-                                        display: "grid",
-                                        gap: 6,
-                                      }}
-                                    >
-                                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                                        <strong style={{ fontSize: 15, color: "#152235" }}>
-                                          {detailText(candidate.provider_name, "Provider candidate")}
-                                        </strong>
-                                        <span
-                                          style={{
-                                            display: "inline-flex",
-                                            padding: "6px 10px",
-                                            borderRadius: 999,
-                                            background: "#fff1df",
-                                            color: "#b56411",
-                                            fontSize: 12,
-                                            fontWeight: 700,
-                                          }}
-                                        >
-                                          {detailText(candidate.match_hint, "Candidate")}
+                                  {candidatePayments(selectedFinding).map((candidate) => {
+                                    return (
+                                      <div
+                                        key={String(candidate.payment_id ?? candidate.provider_name ?? candidate.amount)}
+                                        style={{
+                                          borderRadius: 14,
+                                          background: "#fbfdff",
+                                          border: "1px solid #e8eef6",
+                                          padding: 14,
+                                          display: "grid",
+                                          gap: 6,
+                                        }}
+                                      >
+                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                                          <strong style={{ fontSize: 15, color: "#152235" }}>
+                                            {detailText(stripDemoSuffix(candidate.provider_name), "Provider candidate")}
+                                          </strong>
+                                          <span
+                                            style={{
+                                              display: "inline-flex",
+                                              padding: "6px 10px",
+                                              borderRadius: 999,
+                                              background: "#fff1df",
+                                              color: "#b56411",
+                                              fontSize: 12,
+                                              fontWeight: 700,
+                                            }}
+                                          >
+                                            {detailText(candidate.match_hint, "Needs review")}
+                                          </span>
+                                        </div>
+                                        <span style={{ color: "#617086" }}>
+                                          Paid {detailText(candidate.amount)} on {detailText(candidate.payment_date, "date unknown")}
+                                        </span>
+                                        <span style={{ color: "#617086" }}>
+                                          Payment method: {candidatePaymentSourceText(candidate, "Card / receipt line item")}
                                         </span>
                                       </div>
-                                      <span style={{ color: "#617086" }}>
-                                        Paid {detailText(candidate.amount)} on {detailText(candidate.payment_date, "date unknown")}
-                                      </span>
-                                      <span style={{ color: "#617086" }}>
-                                        Source: {detailText(candidate.payment_source, "Card / receipt line item")}
-                                      </span>
-                                    </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             ) : null}
+                              </>
+                            ) : null}
 
                             <div style={{ display: "grid", gap: 10 }}>
+                              {selectedCreditFindings.length <= 1 &&
+                              String(selectedFinding.finding_type ?? "") === "possible_credit" &&
+                              parseAmount(findingDetails(selectedFinding).credit_amount) > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleFindingAction("request_credit_refund")}
+                                  disabled={isSavingFindingAction}
+                                  style={{
+                                    borderRadius: 16,
+                                    border: "none",
+                                    background: isSavingFindingAction ? "#91a0b5" : "#152235",
+                                    color: "#ffffff",
+                                    padding: "14px 16px",
+                                    fontSize: 15,
+                                    fontWeight: 700,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  {isSavingFindingAction
+                                    ? "Saving..."
+                                    : `Request ${formatCurrency(parseAmount(findingDetails(selectedFinding).credit_amount))} credit/refund`}
+                                </button>
+                              ) : candidatePayments(selectedFinding).length > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleFindingAction("confirm_match")}
+                                  disabled={isSavingFindingAction}
+                                  style={{
+                                    borderRadius: 16,
+                                    border: "none",
+                                    background: isSavingFindingAction ? "#91a0b5" : "#152235",
+                                    color: "#ffffff",
+                                    padding: "14px 16px",
+                                    fontSize: 15,
+                                    fontWeight: 700,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  {isSavingFindingAction ? "Saving..." : "Confirm this payment matches"}
+                                </button>
+                              ) : null}
                               <button
                                 type="button"
-                                style={{
-                                  borderRadius: 16,
-                                  border: "none",
-                                  background: "#152235",
-                                  color: "#ffffff",
-                                  padding: "14px 16px",
-                                  fontSize: 15,
-                                  fontWeight: 700,
-                                  cursor: "pointer",
-                                }}
-                              >
-                                Confirm match
-                              </button>
-                              <button
-                                type="button"
+                                onClick={() => handleFindingAction("not_same_visit")}
+                                disabled={isSavingFindingAction}
                                 style={{
                                   borderRadius: 16,
                                   border: "1px solid #dbe4ef",
@@ -1920,10 +2925,12 @@ export function DashboardShell({
                                   cursor: "pointer",
                                 }}
                               >
-                                Not the same visit
+                                {isSavingFindingAction ? "Saving..." : "This payment is not for this visit"}
                               </button>
                               <button
                                 type="button"
+                                onClick={() => handleFindingAction("add_receipt_or_payment")}
+                                disabled={isSavingFindingAction}
                                 style={{
                                   borderRadius: 16,
                                   border: "1px solid #dbe4ef",
@@ -1935,15 +2942,20 @@ export function DashboardShell({
                                   cursor: "pointer",
                                 }}
                               >
-                                Add receipt or payment
+                                {isSavingFindingAction ? "Saving..." : "Add receipt"}
                               </button>
+                              {findingActionStatus ? (
+                                <span style={{ color: "#617086", fontSize: 14, lineHeight: 1.45 }}>
+                                  {findingActionStatus}
+                                </span>
+                              ) : null}
                             </div>
                           </>
                         ) : (
                           <div style={{ color: "#617086" }}>Select a finding to review its evidence.</div>
                         )}
                       </div>,
-                    )}
+                    ) : null}
                   </div>
                 </div>,
               )}
@@ -1970,15 +2982,21 @@ export function DashboardShell({
                   )}
 
                   <div style={{ display: "grid", gap: 14 }}>
-                    <label style={{ display: "grid", gap: 8 }}>
+                    <div style={{ position: "relative", display: "grid", gap: 8 }}>
                       {futureFieldLabel("Provider or clinic")}
                       <input
+                        aria-label="Provider or clinic"
                         value={futureVisitDraft.provider}
-                        list="provider-suggestions"
-                        onChange={(event) =>
-                          setFutureVisitDraft((current) => ({ ...current, provider: event.target.value }))
-                        }
+                        onFocus={() => setIsProviderSuggestionsOpen(true)}
+                        onBlur={() => {
+                          window.setTimeout(() => setIsProviderSuggestionsOpen(false), 120);
+                        }}
+                        onChange={(event) => {
+                          setFutureVisitDraft((current) => ({ ...current, provider: event.target.value }));
+                          setIsProviderSuggestionsOpen(true);
+                        }}
                         placeholder="Start typing a clinic or provider name"
+                        autoComplete="off"
                         style={{
                           height: 48,
                           borderRadius: 14,
@@ -1990,12 +3008,70 @@ export function DashboardShell({
                           fontWeight: 500,
                         }}
                       />
-                      <datalist id="provider-suggestions">
-                        {providerSuggestions.map((provider) => (
-                          <option key={provider} value={provider} />
-                        ))}
-                      </datalist>
-                    </label>
+                      {isProviderSuggestionsOpen && visibleProviderSuggestions.length ? (
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: "calc(100% + 6px)",
+                            left: 0,
+                            right: 0,
+                            zIndex: 5,
+                            border: "1px solid #dbe4ef",
+                            borderRadius: 14,
+                            background: "#ffffff",
+                            boxShadow: "0 18px 34px rgba(18, 33, 58, 0.12)",
+                            padding: 6,
+                            display: "grid",
+                            gap: 4,
+                          }}
+                        >
+                          {visibleProviderSuggestions.map((provider) => (
+                            <button
+                              key={provider}
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => {
+                                setFutureVisitDraft((current) => ({ ...current, provider }));
+                                setIsProviderSuggestionsOpen(false);
+                              }}
+                              style={{
+                                border: "none",
+                                borderRadius: 10,
+                                background: "#fbfdff",
+                                color: "#152235",
+                                padding: "11px 12px",
+                                textAlign: "left",
+                                fontSize: 14,
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                display: "grid",
+                                gridTemplateColumns: "auto 1fr",
+                                gap: 10,
+                                alignItems: "center",
+                              }}
+                            >
+                              <span
+                                aria-hidden="true"
+                                style={{
+                                  width: 22,
+                                  height: 22,
+                                  borderRadius: 999,
+                                  background: "#def4f1",
+                                  color: "#0f766d",
+                                  display: "grid",
+                                  placeItems: "center",
+                                  fontSize: 12,
+                                  fontWeight: 900,
+                                }}
+                              >
+                                +
+                              </span>
+                              <span>{provider}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
                       <label style={{ display: "grid", gap: 8 }}>
@@ -2283,10 +3359,248 @@ export function DashboardShell({
                 {sectionHeading(
                   "Action Center",
                   "What still needs your attention",
-                  "Keep unresolved billing questions, credits to verify, and follow-up tasks in one queue.",
+                  creditReviewDraft
+                    ? "Choose how you want to contact the provider, then edit the message before sending or calling."
+                    : "Keep unresolved billing questions, credits to verify, and follow-up tasks in one queue.",
                 )}
 
-                <div style={{ display: "grid", gap: 14 }}>
+                {creditReviewDraft ? (
+                  <div
+                    data-testid="credit-review-action-draft"
+                    style={{
+                      border: "1px solid #b9e6df",
+                      borderRadius: 20,
+                      background: "#f4fbfa",
+                      padding: 20,
+                      display: "grid",
+                      gap: 14,
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ display: "grid", gap: 5 }}>
+                        <strong style={{ fontSize: 19 }}>
+                          {creditReviewDraft.mode === "combined" ? "Combined credit/refund request" : "Separate credit/refund request"}
+                        </strong>
+                        <span style={{ color: "#385b64", lineHeight: 1.45 }}>
+                          {creditReviewDraft.provider} · {creditReviewDraft.visits.length} visit{creditReviewDraft.visits.length === 1 ? "" : "s"} · {creditReviewDraft.visits.map((visit) => formatVisitDate(visit.serviceDate)).join(" · ")} · total {formatCurrency(creditReviewDraft.total)}
+                        </span>
+                      </div>
+                      {pill(creditReviewSent ? "Sent" : "Draft", creditReviewSent ? "teal" : "amber")}
+                    </div>
+
+                    <div role="tablist" aria-label="Request communication mode" style={{ display: "flex", gap: 8 }}>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={communicationMode === "email"}
+                        data-testid="credit-review-email-tab"
+                        onClick={() => setCommunicationMode("email")}
+                        style={{
+                          borderRadius: 12,
+                          border: communicationMode === "email" ? "1px solid #117a72" : "1px solid #dbe4ef",
+                          background: communicationMode === "email" ? "#def4f1" : "#ffffff",
+                          color: "#152235",
+                          padding: "10px 14px",
+                          fontWeight: 800,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Email
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={communicationMode === "call"}
+                        data-testid="credit-review-call-tab"
+                        onClick={() => setCommunicationMode("call")}
+                        style={{
+                          borderRadius: 12,
+                          border: communicationMode === "call" ? "1px solid #117a72" : "1px solid #dbe4ef",
+                          background: communicationMode === "call" ? "#def4f1" : "#ffffff",
+                          color: "#152235",
+                          padding: "10px 14px",
+                          fontWeight: 800,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Call script
+                      </button>
+                    </div>
+
+                    {communicationMode === "email" ? (
+                      <>
+                        <label style={{ display: "grid", gap: 6 }}>
+                          <span style={{ color: "#617086", fontSize: 13, fontWeight: 800 }}>To</span>
+                          <input
+                            data-testid="credit-review-email-to"
+                            value={creditReviewDraft.emailTo}
+                            placeholder="Provider billing email"
+                            onChange={(event) =>
+                              setCreditReviewDraft((current) => current ? { ...current, emailTo: event.target.value } : current)
+                            }
+                            style={{
+                              height: 46,
+                              borderRadius: 12,
+                              border: "1px solid #cfe0e8",
+                              background: "#ffffff",
+                              padding: "0 14px",
+                              color: "#152235",
+                              fontFamily: '"SF Pro Text","Aptos","Segoe UI","Helvetica Neue",Arial,sans-serif',
+                              fontSize: 16,
+                            }}
+                          />
+                        </label>
+                        {creditReviewDraft.contactSource ? (
+                          <span style={{ color: "#617086", fontSize: 13, lineHeight: 1.4 }}>
+                            Suggested contact from {creditReviewDraft.contactSource}. Please verify before sending.
+                          </span>
+                        ) : null}
+                        <label style={{ display: "grid", gap: 6 }}>
+                          <span style={{ color: "#617086", fontSize: 13, fontWeight: 800 }}>Subject</span>
+                          <input
+                            data-testid="credit-review-email-subject"
+                            value={creditReviewDraft.emailSubject}
+                            onChange={(event) =>
+                              setCreditReviewDraft((current) => current ? { ...current, emailSubject: event.target.value } : current)
+                            }
+                            style={{
+                              height: 44,
+                              borderRadius: 12,
+                              border: "1px solid #cfe0e8",
+                              background: "#ffffff",
+                              padding: "0 14px",
+                              color: "#152235",
+                              fontFamily: '"SF Pro Text","Aptos","Segoe UI","Helvetica Neue",Arial,sans-serif',
+                              fontSize: 16,
+                            }}
+                          />
+                        </label>
+                        <label style={{ display: "grid", gap: 6 }}>
+                          <span style={{ color: "#617086", fontSize: 13, fontWeight: 800 }}>Message</span>
+                          <textarea
+                            data-testid="credit-review-email-message"
+                            value={creditReviewDraft.emailMessage}
+                            onChange={(event) =>
+                              setCreditReviewDraft((current) => current ? { ...current, emailMessage: event.target.value } : current)
+                            }
+                            style={{
+                              minHeight: 240,
+                              borderRadius: 12,
+                              border: "1px solid #cfe0e8",
+                              background: "#ffffff",
+                              padding: "16px 18px",
+                              color: "#152235",
+                              fontFamily: '"SF Pro Text","Aptos","Segoe UI","Helvetica Neue",Arial,sans-serif',
+                              fontSize: 16,
+                              lineHeight: 1.6,
+                              resize: "vertical",
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          data-testid="send-credit-review"
+                          onClick={handleSendCreditReviewDraft}
+                          disabled={creditReviewSent}
+                          style={{
+                            justifySelf: "start",
+                            borderRadius: 14,
+                            border: "none",
+                            background: creditReviewSent ? "#91a0b5" : "#117a72",
+                            color: "#ffffff",
+                            padding: "13px 18px",
+                            fontSize: 15,
+                            fontWeight: 800,
+                            cursor: creditReviewSent ? "default" : "pointer",
+                          }}
+                        >
+                          {creditReviewSent ? "Email sent" : "Send email"}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <label style={{ display: "grid", gap: 6 }}>
+                          <span style={{ color: "#617086", fontSize: 13, fontWeight: 800 }}>Phone</span>
+                          <input
+                            data-testid="credit-review-call-phone"
+                            value={creditReviewDraft.phone}
+                            placeholder="Provider billing phone"
+                            onChange={(event) =>
+                              setCreditReviewDraft((current) => current ? { ...current, phone: event.target.value } : current)
+                            }
+                            style={{
+                              height: 46,
+                              borderRadius: 12,
+                              border: "1px solid #cfe0e8",
+                              background: "#ffffff",
+                              padding: "0 14px",
+                              color: "#152235",
+                              fontFamily: '"SF Pro Text","Aptos","Segoe UI","Helvetica Neue",Arial,sans-serif',
+                              fontSize: 16,
+                            }}
+                          />
+                        </label>
+                        {creditReviewDraft.contactSource ? (
+                          <span style={{ color: "#617086", fontSize: 13, lineHeight: 1.4 }}>
+                            Suggested contact from {creditReviewDraft.contactSource}. Please verify before calling.
+                          </span>
+                        ) : null}
+                        <label style={{ display: "grid", gap: 6 }}>
+                          <span style={{ color: "#617086", fontSize: 13, fontWeight: 800 }}>Call script</span>
+                          <textarea
+                            data-testid="credit-review-call-script"
+                            value={creditReviewDraft.callScript}
+                            onChange={(event) =>
+                              setCreditReviewDraft((current) => current ? { ...current, callScript: event.target.value } : current)
+                            }
+                            style={{
+                              minHeight: 240,
+                              borderRadius: 12,
+                              border: "1px solid #cfe0e8",
+                              background: "#ffffff",
+                              padding: "16px 18px",
+                              color: "#152235",
+                              fontFamily: '"SF Pro Text","Aptos","Segoe UI","Helvetica Neue",Arial,sans-serif',
+                              fontSize: 16,
+                              lineHeight: 1.6,
+                              resize: "vertical",
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          data-testid="copy-credit-review-script"
+                          onClick={handleCopyCallScript}
+                          style={{
+                            justifySelf: "start",
+                            borderRadius: 14,
+                            border: "1px solid #117a72",
+                            background: "#ffffff",
+                            color: "#117a72",
+                            padding: "13px 18px",
+                            fontSize: 15,
+                            fontWeight: 800,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Copy script
+                        </button>
+                        {copyStatus ? (
+                          <span data-testid="copy-script-status" style={{ color: "#385b64", fontSize: 14 }}>
+                            {copyStatus}
+                          </span>
+                        ) : null}
+                      </>
+                    )}
+                    {actionCenterStatus ? (
+                      <span data-testid="action-center-status" style={{ color: "#385b64", fontSize: 14, lineHeight: 1.45 }}>
+                        {actionCenterStatus}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {!creditReviewDraft ? <div style={{ display: "grid", gap: 14 }}>
                   {reviewItems.length ? (
                     reviewItems.map((finding) => (
                       <div
@@ -2302,15 +3616,12 @@ export function DashboardShell({
                       >
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                           <strong style={{ fontSize: 19 }}>
-                            {String(finding.title ?? "Review item")}
+                            {findingProviderName(finding)}
                           </strong>
                           {pill(String(finding.finding_type ?? "open").replace(/_/g, " "), "amber")}
                         </div>
                         <span style={{ color: "#617086", lineHeight: 1.5 }}>
-                          {String(
-                            finding.summary ??
-                              "Check whether this item needs a refund request, clarification call, or manual correction.",
-                          )}
+                          {findingCardSummary(finding)}
                         </span>
                         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                           {pill("Open", "slate")}
@@ -2321,7 +3632,7 @@ export function DashboardShell({
                   ) : (
                     <div style={{ color: "#617086" }}>No action items yet.</div>
                   )}
-                </div>
+                </div> : null}
               </div>,
             ),
           )}

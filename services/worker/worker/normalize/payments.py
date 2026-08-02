@@ -13,6 +13,16 @@ def _pick(row: dict, keys: list[str]) -> str:
     return ""
 
 
+def _normalize_payment_amount(row: dict) -> str:
+    amount = normalize_money(
+        _pick(row, ["amount", "amount usd", "amount (usd)", "debit", "paid", "transaction amount"])
+    )
+    source = _pick(row, ["source", "account", "card", "payment method", "type", "category"]).lower()
+    if source in {"withdrawal", "debit", "purchase", "payment", "paid"} and amount.startswith("-"):
+        return amount[1:]
+    return amount
+
+
 def normalize_payment_rows(rows: list[dict]) -> list[dict]:
     normalized: list[dict] = []
     for row in rows:
@@ -20,6 +30,7 @@ def normalize_payment_rows(rows: list[dict]) -> list[dict]:
             [
                 _pick(row, ["merchant", "provider", "name", "payee"]),
                 _pick(row, ["description"]),
+                _pick(row, ["category", "classification"]),
             ]
         )
         provider_raw = provider_aliases[0] if provider_aliases else ""
@@ -31,9 +42,7 @@ def normalize_payment_rows(rows: list[dict]) -> list[dict]:
                 "payment_date": normalize_iso_date(
                     _pick(row, ["transaction date", "payment date", "posted date", "date"])
                 ),
-                "amount": normalize_money(
-                    _pick(row, ["amount", "amount usd", "amount (usd)", "debit", "paid", "transaction amount"])
-                ),
+                "amount": _normalize_payment_amount(row),
                 "payment_source": _pick(row, ["source", "account", "card", "payment method", "type", "category"]),
                 "raw_row": row,
             }

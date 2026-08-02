@@ -4,6 +4,7 @@ import {
   buildVisitCreatePayload,
   createDefaultFutureVisitDraft,
   buildProviderSuggestions,
+  filterProviderSuggestions,
 } from "./future-visit-draft";
 
 describe("future visit draft helpers", () => {
@@ -83,10 +84,74 @@ describe("future visit draft helpers", () => {
           { provider_name: "BAY AREA OSM" },
         ],
       ),
-    ).toEqual([
+    ).toEqual(
+      expect.arrayContaining([
+        "Stone Creek Village Dentistry",
+        "Quest Diagnostics",
+        "BAY AREA OSM",
+      ]),
+    );
+  });
+
+  it("includes useful default providers so autocomplete works before the user has history", () => {
+    const suggestions = buildProviderSuggestions([], []);
+
+    expect(suggestions).toEqual(
+      expect.arrayContaining([
+        "BAY AREA OSM",
+        "Quest Diagnostics",
+        "Kaiser Permanente",
+        "Walgreens Pharmacy",
+      ]),
+    );
+    expect(filterProviderSuggestions(suggestions, "bay")).toContain("BAY AREA OSM");
+  });
+
+  it("surfaces real providers from finding details while skipping generic payment labels", () => {
+    expect(
+      buildProviderSuggestions(
+        [{ provider_name: "Stone Creek Village Dentistry", visit_date: "2026-07-04" }],
+        [
+          {
+            provider_name: "Medical payment",
+            finding_type: "unassigned_medical_payment",
+            details: {
+              possible_claims: [
+                { provider_name: "Quest Diagnostics" },
+                { provider_name: "JAMES D KIM" },
+              ],
+            },
+          },
+          {
+            title: "Possible match",
+            details: {
+              provider_name: "Bay Area OSM",
+              candidate_payments: [{ provider_name: "Stone Creek Village Dentistry" }],
+            },
+          },
+        ],
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        "Stone Creek Village Dentistry",
+        "Quest Diagnostics",
+        "JAMES D KIM",
+        "Bay Area OSM",
+      ]),
+    );
+  });
+
+  it("filters provider suggestions by token prefix without losing the empty-query defaults", () => {
+    const suggestions = [
       "Stone Creek Village Dentistry",
       "Quest Diagnostics",
-      "BAY AREA OSM",
+      "JAMES D KIM",
+    ];
+
+    expect(filterProviderSuggestions(suggestions, "")).toEqual(suggestions);
+    expect(filterProviderSuggestions(suggestions, "sto den")).toEqual([
+      "Stone Creek Village Dentistry",
     ]);
+    expect(filterProviderSuggestions(suggestions, "quest")).toEqual(["Quest Diagnostics"]);
   });
 });

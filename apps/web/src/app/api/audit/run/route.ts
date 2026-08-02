@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { DEMO_MODE_COOKIE } from "@/lib/auth/demo-login";
 import { requireRequestUserId } from "@/lib/auth/request-user";
 import { getOwnedFileRow } from "@/lib/db/files";
 import { runSyncAudit } from "@/lib/audit/run-sync-audit";
@@ -35,7 +36,9 @@ export async function POST(request: Request) {
       paymentFileIds,
     });
 
-    return NextResponse.json(result);
+    const response = NextResponse.json(result);
+    response.cookies.delete(DEMO_MODE_COOKIE);
+    return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error";
     const status = message === "Unauthorized" ? 401 : 500;

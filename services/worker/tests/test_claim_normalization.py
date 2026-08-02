@@ -42,6 +42,24 @@ def test_normalize_claim_rows_accepts_service_begin_date_headers():
     assert normalized[0]["service_date"] == "2026-05-13"
 
 
+def test_normalize_claim_rows_collapses_service_date_ranges_to_start_date():
+    rows = [
+        {
+            "PROVIDER NAME": "JAMES KIM",
+            "SERVICE DATE": "05/13/2026-05/13/2026",
+        },
+        {
+            "PROVIDER NAME": "QUEST DIAGNOSTICS",
+            "SERVICE DATE": "05/08/2026 - 05/09/2026",
+        },
+    ]
+
+    normalized = normalize_claim_rows(rows)
+
+    assert normalized[0]["service_date"] == "2026-05-13"
+    assert normalized[1]["service_date"] == "2026-05-08"
+
+
 def test_normalize_claim_rows_collects_provider_aliases_from_doctor_and_facility_fields():
     rows = [
         {

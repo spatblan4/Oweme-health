@@ -45,6 +45,7 @@ config = load_config()
 for name in [
     "0001_initial.sql",
     "0002_storage_policies.sql",
+    "0003_allow_unassigned_medical_payment_findings.sql",
 ]:
     sql = Path("../../packages/db/migrations", name).read_text()
     with psycopg.connect(config.database_url, autocommit=True) as conn:

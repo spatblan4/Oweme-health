@@ -18,6 +18,22 @@ const visitTypeMap: Record<string, "medical" | "dental" | "vision" | "other"> = 
   Therapy: "other",
 };
 
+const defaultProviderSuggestions = [
+  "BAY AREA OSM",
+  "Stone Creek Village Dentistry",
+  "Quest Diagnostics",
+  "JAMES D KIM",
+  "Kaiser Permanente",
+  "Sutter Health",
+  "UCSF Medical Center",
+  "Stanford Health Care",
+  "One Medical",
+  "Carbon Health",
+  "Labcorp",
+  "Walgreens Pharmacy",
+  "CVS Pharmacy",
+];
+
 export function createDefaultFutureVisitDraft(): FutureVisitDraft {
   return {
     provider: "",
@@ -39,22 +55,84 @@ export function buildProviderSuggestions(
   const seen = new Set<string>();
   const suggestions: string[] = [];
 
-  for (const item of [...visits, ...findings]) {
-    const raw = String(item.provider_name ?? item.providerName ?? item.title ?? "").trim();
-    if (!raw) {
-      continue;
+  function addSuggestion(value: unknown) {
+    const raw = String(value ?? "").trim().replace(/\s+/g, " ");
+    if (!raw || isGenericProviderSuggestion(raw)) {
+      return;
     }
 
     const key = raw.toLowerCase();
     if (seen.has(key)) {
-      continue;
+      return;
     }
 
     seen.add(key);
     suggestions.push(raw);
   }
 
+  for (const item of visits) {
+    addSuggestion(item.provider_name ?? item.providerName ?? item.title);
+  }
+
+  for (const finding of findings) {
+    const details = finding.details;
+    if (details && typeof details === "object") {
+      const typedDetails = details as Record<string, unknown>;
+      addSuggestion(typedDetails.provider_name);
+      addProvidersFromList(typedDetails.possible_claims, addSuggestion);
+      addProvidersFromList(typedDetails.candidate_payments, addSuggestion);
+    }
+
+    addSuggestion(finding.provider_name ?? finding.providerName ?? finding.title);
+  }
+
+  for (const provider of defaultProviderSuggestions) {
+    addSuggestion(provider);
+  }
+
   return suggestions;
+}
+
+function addProvidersFromList(value: unknown, addSuggestion: (value: unknown) => void) {
+  if (!Array.isArray(value)) {
+    return;
+  }
+
+  for (const item of value) {
+    if (item && typeof item === "object") {
+      addSuggestion((item as Record<string, unknown>).provider_name);
+    }
+  }
+}
+
+function isGenericProviderSuggestion(value: string) {
+  return ["medical", "medical payment", "healthcare", "health care", "possible match"].includes(
+    value.toLowerCase(),
+  );
+}
+
+function suggestionTokens(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+export function filterProviderSuggestions(suggestions: string[], query: string, limit = 6) {
+  const queryTokens = suggestionTokens(query);
+  if (!queryTokens.length) {
+    return suggestions.slice(0, limit);
+  }
+
+  return suggestions
+    .filter((suggestion) => {
+      const tokens = suggestionTokens(suggestion);
+      return queryTokens.every((queryToken) =>
+        tokens.some((token) => token.startsWith(queryToken)),
+      );
+    })
+    .slice(0, limit);
 }
 
 function parsePaidAmount(value: string) {

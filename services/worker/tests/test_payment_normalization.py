@@ -40,3 +40,38 @@ def test_normalize_payment_rows_collects_provider_aliases():
         "Stone Creek Village Dentistry",
         "JAMES D KIM DDS",
     ]
+
+
+def test_normalize_payment_rows_falls_back_to_category_when_provider_is_missing():
+    rows = [
+        {
+            "category": "Medical",
+            "type": "Purchase",
+            "amount": "$142.00",
+            "transaction date": "05/20/2026",
+        }
+    ]
+
+    normalized = normalize_payment_rows(rows)
+
+    assert normalized[0]["provider_name_raw"] == "Medical"
+    assert normalized[0]["provider_aliases"] == ["Medical"]
+    assert normalized[0]["payment_source"] == "Purchase"
+
+
+def test_normalize_payment_rows_treats_hsa_withdrawals_as_positive_paid_amounts():
+    rows = [
+        {
+            "Type": "Withdrawal",
+            "Amount": "-275.00",
+            "Description": "ALI SALEHPOUR MD DDS",
+            "Payment Date": "02/19/2026",
+        }
+    ]
+
+    normalized = normalize_payment_rows(rows)
+
+    assert normalized[0]["provider_name_raw"] == "ALI SALEHPOUR MD DDS"
+    assert normalized[0]["payment_source"] == "Withdrawal"
+    assert normalized[0]["amount"] == "275.00"
+    assert normalized[0]["payment_date"] == "2026-02-19"

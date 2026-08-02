@@ -5,6 +5,8 @@ from worker.audit import run_audit_for_user
 from worker.db import delete_claim_rows_for_file
 from worker.db import delete_payment_rows_for_file
 from worker.db import get_file_record
+from worker.db import mark_file_jobs_succeeded_for_file
+from worker.db import mark_file_processed
 from worker.jobs import process_claim_job
 from worker.jobs import process_payment_job
 
@@ -31,9 +33,11 @@ def main(argv: list[str] | None = None) -> int:
             deps={
                 "delete_claim_rows_for_file": delete_claim_rows_for_file,
                 "get_file_record": get_file_record,
+                "mark_file_processed": mark_file_processed,
                 "mark_job_succeeded": lambda job_id: None,
             },
         )
+        mark_file_jobs_succeeded_for_file(file_id)
 
     for file_id in args.payment_file_id:
         process_payment_job(
@@ -46,9 +50,11 @@ def main(argv: list[str] | None = None) -> int:
             deps={
                 "delete_payment_rows_for_file": delete_payment_rows_for_file,
                 "get_file_record": get_file_record,
+                "mark_file_processed": mark_file_processed,
                 "mark_job_succeeded": lambda job_id: None,
             },
         )
+        mark_file_jobs_succeeded_for_file(file_id)
 
     result = run_audit_for_user(
         args.user_id,

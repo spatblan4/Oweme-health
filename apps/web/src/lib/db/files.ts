@@ -23,6 +23,11 @@ type OwnedFileRow = {
   status: string;
 };
 
+type OwnedFileStorageRow = {
+  bucket: string;
+  storage_path: string;
+};
+
 type UpdateOwnedFileRowPatch = {
   status?: string;
 };
@@ -79,4 +84,18 @@ export async function patchOwnedFileRow(
   }
 
   return data;
+}
+
+export async function listOwnedFileRows(userId: string): Promise<OwnedFileStorageRow[]> {
+  const supabase = createAdminSupabaseClient();
+  const { data, error } = await supabase
+    .from("files")
+    .select("bucket,storage_path")
+    .eq("user_id", userId);
+
+  if (error) {
+    throw new Error(`Failed to load file rows: ${error.message}`);
+  }
+
+  return data ?? [];
 }

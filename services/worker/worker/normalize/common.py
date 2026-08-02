@@ -46,6 +46,9 @@ def normalize_iso_date(value: str | date | datetime | None) -> str | None:
     if isinstance(value, date):
         return value.isoformat()
     text = str(value).strip()
+    range_match = re.match(r"^(\d{1,2}/\d{1,2}/\d{2,4})\s*-\s*\d{1,2}/\d{1,2}/\d{2,4}$", text)
+    if range_match:
+        text = range_match.group(1)
     for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
         try:
             return datetime.strptime(text, fmt).date().isoformat()

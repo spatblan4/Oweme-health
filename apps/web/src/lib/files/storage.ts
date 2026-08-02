@@ -48,3 +48,16 @@ export async function confirmObjectExists(args: {
 
   return (data ?? []).some((item) => item.name === fileName);
 }
+
+export async function removeStorageObjects(bucket: string, storagePaths: string[]) {
+  if (!storagePaths.length) {
+    return;
+  }
+
+  const supabase = createAdminSupabaseClient();
+  const { error } = await supabase.storage.from(bucket).remove(storagePaths);
+
+  if (error) {
+    throw new Error(`Failed to remove storage objects: ${error.message}`);
+  }
+}

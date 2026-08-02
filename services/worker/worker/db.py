@@ -107,6 +107,19 @@ def mark_job_succeeded(job_id: str):
         cur.execute(sql, (job_id,))
 
 
+def mark_file_jobs_succeeded_for_file(file_id: str):
+    sql = """
+    update file_jobs
+       set status = 'succeeded',
+           started_at = coalesce(started_at, now()),
+           finished_at = now()
+     where file_id = %s
+       and status in ('queued', 'running')
+    """
+    with get_cursor() as cur:
+        cur.execute(sql, (file_id,))
+
+
 def mark_file_processed(file_id: str):
     sql = """
     update files
@@ -205,15 +218,17 @@ def list_claim_rows(user_id: str, source_file_ids: list[str] | None = None) -> l
 
 def list_payment_rows(user_id: str, source_file_ids: list[str] | None = None) -> list[dict]:
     sql = """
-    select id, provider_name_raw, provider_name_normalized, payment_date, amount, normalized_payload
-      from payments
-     where user_id = %s
+    select p.id, p.provider_name_raw, p.provider_name_normalized, p.payment_date, p.amount,
+           p.payment_source, p.normalized_payload, p.source_file_id, f.original_name as source_file_name
+      from payments p
+      left join files f on f.id = p.source_file_id
+     where p.user_id = %s
     """
     params: list = [user_id]
     if source_file_ids:
-        sql += " and source_file_id = any(%s)"
+        sql += " and p.source_file_id = any(%s)"
         params.append(source_file_ids)
-    sql += " order by payment_date asc nulls last, created_at asc"
+    sql += " order by p.payment_date asc nulls last, p.created_at asc"
     with get_cursor() as cur:
         cur.execute(sql, params)
         return cur.fetchall() or []

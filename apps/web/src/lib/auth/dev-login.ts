@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { DEMO_MODE_COOKIE } from "@/lib/auth/demo-login";
+
 export const DEV_TEST_EMAIL = "dev-test@oweme.local";
 export const DEV_TEST_USER_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -108,5 +110,6 @@ export function createDevLoginFallbackResponse(origin: string, userId = DEV_TEST
     sameSite: "lax",
     httpOnly: true,
   });
+  response.cookies.delete(DEMO_MODE_COOKIE);
   return response;
 }

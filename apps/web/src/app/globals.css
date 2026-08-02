@@ -6,9 +6,18 @@
 
 .oweme-flow-layer {
   position: absolute;
-  inset: 0;
+  top: 22px;
+  right: 0;
+  left: 0;
+  height: 132px;
   pointer-events: none;
-  overflow: hidden;
+  overflow: visible;
+  z-index: 1;
+}
+
+.oweme-home-hero > :not(.oweme-flow-layer) {
+  position: relative;
+  z-index: 3;
 }
 
 .oweme-flow-trail {
@@ -21,6 +30,7 @@
 .oweme-flow-token,
 .oweme-flow-bill,
 .oweme-flow-bag,
+.oweme-flow-coin,
 .oweme-flow-winged,
 .oweme-flow-wing,
 .oweme-flow-star,
@@ -55,6 +65,26 @@
   font-weight: 900;
   box-shadow: 0 12px 26px rgba(15, 23, 42, 0.05), inset 0 0 0 1px rgba(255, 255, 255, 0.24);
   animation: oweme-bag-bob 10s ease-in-out infinite;
+}
+
+.oweme-flow-token.oweme-flow-label,
+.oweme-flow-bill.oweme-flow-label,
+.oweme-flow-bag.oweme-flow-label {
+  z-index: 6;
+  animation: none !important;
+  filter: none;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08), inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+}
+
+.oweme-flow-coin {
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 36% 32%, rgba(255, 255, 255, 0.82), transparent 32%),
+    linear-gradient(135deg, rgba(251, 191, 36, 0.2), rgba(20, 184, 166, 0.18), rgba(34, 197, 94, 0.2));
+  border: 1px solid rgba(20, 184, 166, 0.12);
+  opacity: 0.22;
+  animation: oweme-coin-stream 12s ease-in-out infinite;
 }
 
 .oweme-flow-winged {
@@ -158,6 +188,19 @@
   50% { transform: scale(1.02); opacity: 0.46; }
 }
 
+@keyframes oweme-flow-pulse {
+  0%, 100% { transform: translate3d(0, 0, 0); opacity: 0.72; }
+  50% { transform: translate3d(4px, -3px, 0); opacity: 0.94; }
+}
+
+@keyframes oweme-coin-stream {
+  0% { transform: translate3d(-28px, 6px, 0) scale(0.82); opacity: 0; }
+  18% { opacity: 0.18; }
+  50% { transform: translate3d(0, -8px, 0) scale(1); opacity: 0.24; }
+  82% { opacity: 0.16; }
+  100% { transform: translate3d(34px, 4px, 0) scale(0.9); opacity: 0; }
+}
+
 @media (max-width: 1100px) {
   .oweme-flow-layer--left,
   .oweme-flow-layer--right {
@@ -169,5 +212,17 @@
   .oweme-flow-layer--left,
   .oweme-flow-layer--right {
     display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oweme-flow-trail,
+  .oweme-flow-token,
+  .oweme-flow-bill,
+  .oweme-flow-bag,
+  .oweme-flow-coin,
+  .oweme-flow-star,
+  .oweme-flow-orbit {
+    animation: none !important;
   }
 }

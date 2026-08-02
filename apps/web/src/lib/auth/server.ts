@@ -3,6 +3,13 @@ import { cookies } from "next/headers";
 
 import { getPublicSupabaseEnv } from "./env";
 
+function isReadOnlyServerCookieError(error: unknown) {
+  return (
+    error instanceof Error &&
+    error.message.includes("Cookies can only be modified in a Server Action or Route Handler")
+  );
+}
+
 export async function createServerSupabaseClient() {
   const { url, anonKey } = getPublicSupabaseEnv();
   const cookieStore = await cookies();
@@ -18,7 +25,13 @@ export async function createServerSupabaseClient() {
         }>,
       ) => {
         cookiesToSet.forEach(({ name, value, options }) => {
-          cookieStore.set(name, value, options);
+          try {
+            cookieStore.set(name, value, options);
+          } catch (error) {
+            if (!isReadOnlyServerCookieError(error)) {
+              throw error;
+            }
+          }
         });
       },
     },
