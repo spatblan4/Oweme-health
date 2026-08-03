@@ -35,6 +35,17 @@ describe("shouldUseSupabaseMiddlewareAuth", () => {
       }),
     ).toBe(true);
   });
+
+  it("probes Supabase on the login page when a saved personal session exists", () => {
+    expect(
+      shouldUseSupabaseMiddlewareAuth({
+        hostname: "localhost",
+        localUserId: "c866903e-f167-49b4-8bcf-3b9102f557ac",
+        pathname: "/login",
+        nodeEnv: "development",
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("shouldUseDemoModeCookie", () => {

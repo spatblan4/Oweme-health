@@ -8,13 +8,10 @@ export default async function LoginPage({
   searchParams: Promise<{
     authError?: string;
     authMessage?: string;
-    devLoginError?: string;
     email?: string;
   }>;
 }) {
   const params = await searchParams;
-  const devLoginError =
-    params.devLoginError === "supabase_unavailable" ? "supabase_unavailable" : undefined;
   const authError = typeof params.authError === "string" ? params.authError : undefined;
   const authMessage = typeof params.authMessage === "string" ? params.authMessage : undefined;
   const notice = authError
@@ -35,10 +32,8 @@ export default async function LoginPage({
       }}
     >
       <LoginForm
-        devLoginError={devLoginError}
         initialEmail={initialEmail}
         notice={notice}
-        showDevLogin={process.env.NODE_ENV !== "production"}
       />
     </main>
   );

@@ -27,6 +27,14 @@ vi.mock("./env", () => ({
 import { createServerSupabaseClient } from "./server";
 
 describe("createServerSupabaseClient", () => {
+  it("configures a persistent 30-day auth session", async () => {
+    mocks.getAll.mockReturnValue([]);
+
+    await createServerSupabaseClient();
+
+    expect(mocks.createServerClient.mock.calls.at(-1)?.[2].cookieOptions.maxAge).toBe(60 * 60 * 24 * 30);
+  });
+
   it("allows Server Component auth reads when Supabase attempts a cookie refresh", async () => {
     mocks.getAll.mockReturnValue([{ name: "oweme-demo-mode", value: "1" }]);
     mocks.set.mockImplementation(() => {

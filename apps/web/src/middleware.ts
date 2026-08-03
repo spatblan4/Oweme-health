@@ -47,6 +47,7 @@ export async function middleware(request: NextRequest) {
 
   if (userId) {
     response.cookies.set("oweme-user-id", userId, {
+      maxAge: 60 * 60 * 24 * 30,
       path: "/",
       sameSite: "lax",
       httpOnly: true,

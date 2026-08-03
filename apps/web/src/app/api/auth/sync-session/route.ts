@@ -17,6 +17,7 @@ export async function POST() {
 
     const response = NextResponse.json({ userId: user.id });
     response.cookies.set("oweme-user-id", user.id, {
+      maxAge: 60 * 60 * 24 * 30,
       path: "/",
       sameSite: "lax",
       httpOnly: true,

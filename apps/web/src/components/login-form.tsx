@@ -1,112 +1,60 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-
-import { createBrowserSupabaseClient } from "@/lib/auth/client";
-import { readSupabaseSessionFromHash } from "@/lib/auth/hash-session";
-import { authErrorMessage, SUPABASE_UNREACHABLE_MESSAGE } from "@/lib/auth/magic-link";
+import React, { useState } from "react";
 
 export function LoginForm({
-  devLoginError,
   initialEmail = "",
   notice,
-  showDevLogin = false,
 }: {
-  devLoginError?: "supabase_unavailable";
   initialEmail?: string;
   notice?: { tone: "error" | "success"; message: string };
-  showDevLogin?: boolean;
 }) {
-  const [isLocalHost, setIsLocalHost] = useState(false);
-  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">(
-    notice?.tone === "success" ? "sent" : notice?.tone === "error" ? "error" : "idle",
+  const [status, setStatus] = useState<"idle" | "sending" | "code" | "verifying" | "error">(
+    notice?.tone === "error" ? "error" : "idle",
   );
+  const [email, setEmail] = useState(initialEmail);
+  const [code, setCode] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
   const [message, setMessage] = useState(notice?.message ?? "");
 
-  useEffect(() => {
-    setIsLocalHost(
-      typeof window !== "undefined" &&
-        (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"),
-    );
-  }, []);
-
-  useEffect(() => {
-    const session = readSupabaseSessionFromHash(window.location.hash);
-    if (!session) {
-      return;
+  async function sendCode() {
+    if (status === "sending") return;
+    setStatus("sending");
+    setMessage("");
+    const formData = new FormData();
+    formData.set("email", email);
+    try {
+      const response = await fetch("/api/auth/send-code", { method: "POST", body: formData });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || "Could not send a code.");
+      setCodeSent(true);
+      setCode("");
+      setStatus("code");
+      setMessage(payload.message);
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Could not send a code. Try again.");
     }
+  }
 
-    const hashSession = session;
-    let cancelled = false;
-
-    async function finishDevLogin() {
-      let client: ReturnType<typeof createBrowserSupabaseClient>;
-      try {
-        client = createBrowserSupabaseClient();
-      } catch {
-        setStatus("error");
-        setMessage("Supabase environment variables are not configured yet.");
-        return;
-      }
-
-      setStatus("sending");
-      setMessage("Finishing sign in...");
-
-      let sessionResult: Awaited<ReturnType<typeof client.auth.setSession>>;
-      try {
-        sessionResult = await client.auth.setSession({
-          access_token: hashSession.accessToken,
-          refresh_token: hashSession.refreshToken,
-        });
-      } catch {
-        if (!cancelled) {
-          setStatus("error");
-          setMessage(SUPABASE_UNREACHABLE_MESSAGE);
-        }
-        return;
-      }
-
-      if (cancelled) {
-        return;
-      }
-
-      if (sessionResult.error) {
-        setStatus("error");
-        setMessage(authErrorMessage(sessionResult.error));
-        return;
-      }
-
-      let syncResponse: Response;
-      try {
-        syncResponse = await fetch("/api/auth/sync-session", {
-          method: "POST",
-          credentials: "include",
-        });
-      } catch {
-        if (!cancelled) {
-          setStatus("error");
-          setMessage("Signed in, but could not sync your local session yet.");
-        }
-        return;
-      }
-
-      if (!syncResponse.ok) {
-        setStatus("error");
-        setMessage("Signed in, but could not sync your local session yet.");
-        return;
-      }
-
-      const next = new URLSearchParams(window.location.search).get("next") ?? "/dashboard";
-      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-      window.location.assign(next);
+  async function verifyCode(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (status === "verifying") return;
+    setStatus("verifying");
+    setMessage("");
+    const formData = new FormData();
+    formData.set("email", email);
+    formData.set("code", code);
+    try {
+      const response = await fetch("/api/auth/verify-code", { method: "POST", body: formData });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || "That code is invalid or expired.");
+      window.location.assign(payload.next || "/dashboard");
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "That code is invalid or expired.");
     }
-
-    void finishDevLogin();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }
 
   return (
     <section
@@ -166,14 +114,23 @@ export function LoginForm({
             </span>
           </div>
 
-          <form noValidate action="/api/auth/magic-link" method="post" style={{ display: "grid", gap: 14 }}>
+          {!codeSent ? (
+          <form
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              void sendCode();
+            }}
+            style={{ display: "grid", gap: 14 }}
+          >
             <label htmlFor="oweme-personal-email" style={{ display: "grid", gap: 8 }}>
               <span style={{ color: "#314255", fontWeight: 700, fontSize: 14 }}>Email</span>
               <input
                 id="oweme-personal-email"
                 name="email"
                 type="email"
-                defaultValue={initialEmail}
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
                 placeholder="you@example.com"
                 aria-describedby={message ? "oweme-login-message" : undefined}
                 style={{
@@ -201,9 +158,45 @@ export function LoginForm({
                 cursor: status === "sending" ? "wait" : "pointer",
               }}
             >
-              {status === "sending" ? "Sending..." : "Send magic link"}
+              {status === "sending" ? "Sending code..." : "Email me a sign-in code"}
             </button>
           </form>
+          ) : (
+            <form onSubmit={verifyCode} style={{ display: "grid", gap: 14 }}>
+              <label htmlFor="oweme-personal-code" style={{ display: "grid", gap: 8 }}>
+                <span style={{ color: "#314255", fontWeight: 700, fontSize: 14 }}>6-digit code</span>
+                <input
+                  id="oweme-personal-code"
+                  name="code"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  value={code}
+                  onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="123456"
+                  aria-describedby="oweme-login-message"
+                  style={{ height: 52, borderRadius: 14, border: "1px solid #cfd8e3", padding: "0 14px", fontSize: 20, letterSpacing: "0.2em", color: "#152235" }}
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={status === "verifying" || code.length !== 6}
+                style={{ height: 52, borderRadius: 14, border: 0, background: code.length === 6 ? "#152235" : "#91a0b5", color: "#ffffff", fontSize: 16, fontWeight: 800, cursor: status === "verifying" ? "wait" : "pointer" }}
+              >
+                {status === "verifying" ? "Verifying..." : "Sign in"}
+              </button>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <button type="button" onClick={() => void sendCode()} disabled={status === "sending"} style={{ border: 0, background: "transparent", color: "#0f766d", padding: 0, fontWeight: 800, cursor: "pointer" }}>
+                  {status === "sending" ? "Sending..." : "Resend code"}
+                </button>
+                <button type="button" onClick={() => { setCodeSent(false); setCode(""); setStatus("idle"); setMessage(""); }} style={{ border: 0, background: "transparent", color: "#617086", padding: 0, fontWeight: 700, cursor: "pointer" }}>
+                  Change email
+                </button>
+              </div>
+            </form>
+          )}
 
           <span style={{ color: "#7c879e", fontSize: 13, lineHeight: 1.45 }}>
             This is the account you should use day to day. It is separate from demo data.
@@ -258,56 +251,6 @@ export function LoginForm({
           </button>
         </form>
       </div>
-
-      {showDevLogin || isLocalHost ? (
-        <div
-          style={{
-            display: "grid",
-            gap: 10,
-            borderTop: "1px solid #eef3f8",
-            paddingTop: 16,
-          }}
-        >
-          {devLoginError === "supabase_unavailable" ? (
-            <p
-              style={{
-                margin: 0,
-                border: "1px solid #fed7aa",
-                borderRadius: 8,
-                background: "#fff7ed",
-                color: "#9a3412",
-                lineHeight: 1.45,
-                padding: "10px 12px",
-                fontSize: 14,
-              }}
-            >
-              Your local dev shortcut needs Supabase, which is unreachable right now.
-              Use the judge demo for a safe offline walkthrough.
-            </p>
-          ) : null}
-          <span style={{ color: "#7c879e", fontSize: 13, fontWeight: 800 }}>
-            Local developer shortcut
-          </span>
-          <form action="/api/dev/login" method="post">
-            <button
-              type="submit"
-              style={{
-                height: 48,
-                width: "100%",
-                borderRadius: 14,
-                border: "1px solid #d9e1ea",
-                background: "#f8fbff",
-                color: "#152235",
-                fontSize: 15,
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              Use local dev account
-            </button>
-          </form>
-        </div>
-      ) : null}
 
       {message ? (
         <p

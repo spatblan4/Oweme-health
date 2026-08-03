@@ -11,7 +11,7 @@ export function shouldUseSupabaseMiddlewareAuth({
   nodeEnv,
   pathname,
 }: SupabaseMiddlewareAuthArgs) {
-  if (pathname === "/login" || pathname === "/auth/callback") {
+  if (pathname === "/auth/callback") {
     return false;
   }
 

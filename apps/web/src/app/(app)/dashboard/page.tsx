@@ -23,15 +23,13 @@ const emptyDashboardData = {
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ view?: string; auditComplete?: string; devDataCleared?: string; demoLoaded?: string }>;
+  searchParams?: Promise<{ view?: string; auditComplete?: string; devDataCleared?: string }>;
 }) {
   const params = await searchParams;
   const initialView = normalizeDashboardView(params?.view);
   const flashMessage =
     params?.auditComplete === "1"
       ? "Audit complete. Results refreshed."
-      : params?.demoLoaded === "1"
-      ? "Synthetic demo loaded."
       : params?.devDataCleared === "1"
         ? "Dev test data cleared."
         : undefined;
@@ -67,6 +65,7 @@ export default async function DashboardPage({
         findings={data.findings}
         initialView={initialView}
         flashMessage={flashMessage}
+        pastAuditComplete={params?.auditComplete === "1"}
         currentUser={{
           id: DEMO_JUDGE_USER_ID,
           email: DEMO_JUDGE_EMAIL,
@@ -97,6 +96,7 @@ export default async function DashboardPage({
       findings={data.findings}
       initialView={initialView}
       flashMessage={flashMessage}
+      pastAuditComplete={params?.auditComplete === "1"}
       currentUser={{
         id: userId,
         email: user.email ?? null,

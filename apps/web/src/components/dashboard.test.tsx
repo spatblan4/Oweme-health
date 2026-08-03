@@ -2,9 +2,34 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { buildConfirmMatchPayload, buildCreditReviewDraft, DashboardShell } from "./dashboard-shell";
+import {
+  buildConfirmMatchPayload,
+  buildCreditReviewDraft,
+  DashboardShell,
+  findingActionDestination,
+} from "./dashboard-shell";
 
 describe("DashboardShell", () => {
+  it("gives Action Center items a route back to the matching Past Credits review", () => {
+    const html = renderToStaticMarkup(
+      <DashboardShell
+        jobs={[]}
+        visits={[]}
+        findings={[{
+          id: "finding-action-1",
+          provider_name: "Stone Creek Village De",
+          finding_type: "possible_credit",
+          status: "open",
+          details: { credit_amount: "42.00" },
+        }]}
+        initialView="actions"
+      />,
+    );
+
+    expect(html).toContain('data-testid="action-center-finding-finding-action-1"');
+    expect(html).toContain("Review in Past Credits");
+  });
+
   it("builds editable email and call communication drafts with combined visit evidence", () => {
     const draft = buildCreditReviewDraft(
       [
@@ -233,7 +258,11 @@ describe("DashboardShell", () => {
     expect(reviewCard).toContain("$262.60");
     expect(reviewCard).not.toContain("Needs review");
     expect(reviewCard).not.toContain("2 possible");
+    expect(html).toContain("Write provider for refund / credit");
+    expect(html).toContain('data-testid="write-provider-refund-credit"');
     expect(html).toContain("Revise selected payments");
+    expect(html).not.toContain("Confirm and save payment match");
+    expect(html).not.toContain("reject-payment-match");
   });
 
   it("renders candidate payment checkboxes selected by default with a selected-total summary", () => {
@@ -278,9 +307,16 @@ describe("DashboardShell", () => {
     expect(html).toContain('type="checkbox"');
     expect(html.match(/checked=""/g)?.length).toBe(2);
     expect(html).toContain("Selected payments: $275.00 across 2 payments");
+    expect(html).toContain("Needs confirmation");
+    expect(html).toContain("Confirm and save payment match");
+    expect(html).toContain("These payments don&#x27;t match this visit");
+    expect(html).not.toContain("Write provider for refund / credit");
     expect(html).toContain("EOB responsibility: $12.40");
     expect(html).toContain("Possible credit: $262.60");
-    expect(html).toContain("Confirm selected payments match");
+    expect(html).toContain("Confirm and save payment match");
+    expect(html.indexOf("Records to check")).toBeLessThan(html.indexOf("Claim / EOB"));
+    expect(html).not.toContain("Next step");
+    expect(html).toContain('data-testid="reject-payment-match"');
   });
 
   it("builds confirm-match payload with selected candidate payment IDs", () => {
@@ -288,6 +324,55 @@ describe("DashboardShell", () => {
       action: "confirm_match",
       paymentIds: ["payment-133", "payment-142"],
     });
+  });
+
+  it("routes confirmed refund/credit requests to the Action Center", () => {
+    expect(findingActionDestination("request_credit_refund")).toBe("actions");
+    expect(findingActionDestination("confirm_match")).toBeNull();
+  });
+
+  it("keeps demo Past Credits upload-first until an audit is explicitly run", () => {
+    const html = renderToStaticMarkup(
+      <DashboardShell
+        jobs={[]}
+        visits={[]}
+        findings={[{ id: "demo-credit", provider_name: "Demo Provider", finding_type: "possible_credit", details: { credit_amount: "42.00" } }]}
+        initialView="past"
+        currentUser={{
+          id: "11111111-1111-1111-1111-111111111111",
+          email: "demo-judge@oweme.local",
+          isDevTest: false,
+          isDemo: true,
+        }}
+      />,
+    );
+
+    expect(html).toContain("Start by adding the claim/EOB and payment/receipt records you want OweMe to compare.");
+    expect(html).not.toContain("Upload your evidence first");
+    expect(html).toContain("Run audit");
+    expect(html).not.toContain('data-testid="past-credits-upload-first-state"');
+    expect(html).not.toContain("possible credits found");
+    expect(html).not.toContain("Review queue");
+    expect(html).not.toContain("Demo Provider");
+    expect(html).not.toContain("Load sample claim + payment files");
+
+    const auditedHtml = renderToStaticMarkup(
+      <DashboardShell
+        jobs={[]}
+        visits={[]}
+        findings={[{ id: "demo-credit", provider_name: "Demo Provider", finding_type: "possible_credit", details: { credit_amount: "42.00" } }]}
+        initialView="past"
+        pastAuditComplete
+        currentUser={{
+          id: "11111111-1111-1111-1111-111111111111",
+          email: "demo-judge@oweme.local",
+          isDevTest: false,
+          isDemo: true,
+        }}
+      />,
+    );
+    expect(auditedHtml).toContain("possible credits found");
+    expect(auditedHtml).toContain("Review queue");
   });
 
   it("renders the prototype-aligned navigation and primary views", () => {
@@ -312,11 +397,10 @@ describe("DashboardShell", () => {
     );
 
     expect(html).toContain("OweMe Health");
-    expect(html).toContain("Find medical credits you may be owed");
-    expect(html.match(/Find medical credits you may be owed/g)?.length).toBe(1);
-    expect(html).not.toContain("Who still owes you?");
+    expect(html).toContain("Don’t let a delayed EOB turn into a forgotten refund.");
+    expect(html).toContain("Paid your medical bill? Check if you’re owed a refund.");
     expect(html).toContain(
-      "OweMe compares what you paid with what insurance says you owe, then flags credits, refunds, and visits to follow up.",
+      "When your EOB arrives weeks later, OweMe reminds you to compare it with what you paid—so potential refunds don’t get forgotten.",
     );
     expect(html).toContain("Check past bills");
     expect(html).not.toContain("Check past bills →");
@@ -429,7 +513,7 @@ describe("DashboardShell", () => {
       />,
     );
 
-    expect(html).toContain("Log a visit before it disappears");
+    expect(html).toContain("Track a visit while you wait for the EOB");
     expect(html).toContain('aria-label="Provider or clinic"');
     expect(html).toContain('autoComplete="off"');
     expect(html).toContain("Stone Creek Village Dentistry");
@@ -437,7 +521,13 @@ describe("DashboardShell", () => {
     expect(html).toContain('value=""');
     expect(html).not.toContain('value="275.00"');
     expect(html).toContain('value="" selected="">Select payment method');
+    expect(html).toContain("Provider balance / credit");
     expect(html).toContain('value="" selected="">Select visit type');
+
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("View details");
+    expect(html).toContain('role="separator"');
+    expect(html).toContain("Resize Future Visits form and tracked details");
   });
 
   it("renders the past credits workspace with visit-based matching UI", () => {
@@ -570,7 +660,7 @@ describe("DashboardShell", () => {
     )?.[0] ?? "";
 
     expect(html).not.toContain("PAST CREDITS");
-    expect(html).toContain("Check old bills");
+    expect(html).toContain("Find a potential refund in past bills");
     expect(html).toContain('for="claims-file-input"');
     expect(html).toContain('for="payments-file-input"');
     expect(html).toContain("Manual fallback");
@@ -592,8 +682,8 @@ describe("DashboardShell", () => {
     expect(html).not.toContain("Possible overpayment");
     expect(html).not.toContain("BAY AREA OSM payment picture");
     expect(html).toContain("ALI SALEHPOUR MD DDS");
-    expect(html).toContain("Possible credit $150.00");
-    expect(html).toContain("Possible credit $473.90");
+    expect(html).toContain("Confirmed credit $150.00");
+    expect(html).toContain("Confirmed credit $473.90");
     expect(html).toContain("You paid");
     expect(html).toContain("Payment method");
     expect(html).toContain("HSA");
@@ -605,16 +695,19 @@ describe("DashboardShell", () => {
     expect(html).not.toContain("HSA withdrawal covers the EOB responsibility");
     expect(html).not.toContain("Needs confirmation because the EOB provider and payment merchant are different");
     expect(html).toContain("Why this may be a credit/refund");
-    expect(html).toContain("Request a combined $623.90 credit/refund review for 2 visits.");
+    expect(html).toContain("Confirm this visit &amp; ask for a refund");
     expect(html).not.toContain("Request a $473.90 credit/refund review from ALI SALEHPOUR MD DDS.");
-    expect(html).toContain("Request combined refund review");
+    expect(html).toContain("Step 1 complete: payment matches confirmed");
+    expect(html).toContain("Payment matches are confirmed for all 2 visits");
+    expect(html).toContain("Confirm this visit &amp; ask for a refund");
+    expect(html).not.toContain("Step 2");
     expect(html).toContain("Request separately");
     expect(firstCreditCard).not.toContain("Potential credit $473.90 — request a provider review.");
     expect(firstCreditCard).not.toContain("They may owe you $473.90");
     expect(firstCreditCard).not.toContain("Ask ALI SALEHPOUR MD DDS for a credit/refund review.");
     expect(html).toContain("Records to check");
     expect(html).toContain("Payment method: HSA");
-    expect(html).toContain("Next step");
+    expect(html).not.toContain("Next step");
     expect(html).not.toContain("Request $473.90 credit/refund");
     expect(html).toContain("This payment is not for this visit");
     expect(html).toContain("Add receipt");

@@ -3,7 +3,7 @@ export const SUPABASE_UNREACHABLE_MESSAGE =
 export const SUPABASE_PROJECT_UNRESOLVED_MESSAGE =
   "Supabase project URL could not be resolved. Update the local Supabase credentials or restore the Supabase project, then restart the web server.";
 
-const MAGIC_LINK_EMAIL_REQUIRED_MESSAGE = "Enter your email to receive a magic link.";
+const MAGIC_LINK_EMAIL_REQUIRED_MESSAGE = "Enter your email to receive a sign-in code.";
 const MAGIC_LINK_EMAIL_INVALID_MESSAGE = "Enter a valid email address.";
 
 export function authErrorMessage(error: { message?: string } | null | undefined) {

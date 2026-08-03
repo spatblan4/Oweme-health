@@ -161,6 +161,38 @@ def insert_claim_row(row: dict):
         )
 
 
+def insert_claim_rows(rows: list[dict]):
+    if not rows:
+        return
+    sql = """
+    insert into claims (
+      id, user_id, source_file_id, provider_name_raw, provider_name_normalized,
+      service_date, patient_responsibility, insurance_paid, billed_amount, allowed_amount,
+      status, normalized_payload
+    ) values (
+      gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb
+    )
+    """
+    import json
+
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(
+                sql,
+                [
+                    (
+                        row["user_id"], row["source_file_id"],
+                        row.get("provider_name_raw"), row.get("provider_name_normalized"),
+                        row.get("service_date"), row.get("patient_responsibility"),
+                        row.get("insurance_paid"), row.get("billed_amount"),
+                        row.get("allowed_amount"), row.get("status"),
+                        json.dumps(row["normalized_payload"]),
+                    )
+                    for row in rows
+                ],
+            )
+
+
 def insert_payment_row(row: dict):
     sql = """
     insert into payments (
@@ -186,6 +218,35 @@ def insert_payment_row(row: dict):
                 json.dumps(row["normalized_payload"]),
             ),
         )
+
+
+def insert_payment_rows(rows: list[dict]):
+    if not rows:
+        return
+    sql = """
+    insert into payments (
+      id, user_id, source_file_id, provider_name_raw, provider_name_normalized,
+      payment_date, amount, payment_source, normalized_payload
+    ) values (
+      gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s, %s::jsonb
+    )
+    """
+    import json
+
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(
+                sql,
+                [
+                    (
+                        row["user_id"], row["source_file_id"],
+                        row.get("provider_name_raw"), row.get("provider_name_normalized"),
+                        row.get("payment_date"), row.get("amount"),
+                        row.get("payment_source"), json.dumps(row["normalized_payload"]),
+                    )
+                    for row in rows
+                ],
+            )
 
 
 def delete_claim_rows_for_file(file_id: str):

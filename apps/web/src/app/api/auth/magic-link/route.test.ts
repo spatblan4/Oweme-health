@@ -45,7 +45,7 @@ describe("POST /api/auth/magic-link", () => {
     const location = new URL(response.headers.get("location") ?? "");
     expect(location.pathname).toBe("/login");
     expect(location.searchParams.get("authError")).toBe(
-      "Enter your email to receive a magic link.",
+      "Enter your email to receive a sign-in code.",
     );
   });
 

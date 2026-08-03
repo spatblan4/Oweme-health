@@ -1,6 +1,6 @@
 # OweMe Health
 
-OweMe Health is a personal medical and dental bill audit app. The long-term product combines file upload, claim and payment normalization, visit tracking, and audit findings such as possible credits, unclear payment allocation, and questionable canceled-visit charges.
+OweMe Health is a personal medical and dental bill follow-up app. It helps you record what you paid, wait for an insurance EOB, compare the EOB with your payment, and review potential overpayments or refunds.
 
 ## Repository shape
 
@@ -14,7 +14,7 @@ This repository now has two tracks:
 
 ## Privacy
 
-Do not commit real medical files, real claims exports, real payment exports, backup JSON, or personal notes. Use synthetic demo data in any public demo or hackathon submission.
+Do not commit real medical files, claims exports, payment exports, backup JSON, or personal notes. The files in `demo-data/` are synthetic and safe for a public demo; use those instead of personal records. OweMe does not automatically retrieve EOBs or guarantee a refund.
 
 ## Architecture
 
@@ -23,6 +23,28 @@ Do not commit real medical files, real claims exports, real payment exports, bac
 - Processing: Python worker
 
 The web app handles UI, auth, uploads, and APIs. The worker handles OCR, PDF extraction, normalization, and audit finding generation.
+
+## Run the web app
+
+```bash
+cd apps/web
+npm install
+npm run dev       # local development
+npm test          # Vitest suite
+npm run build     # production build check
+```
+
+The worker runtime is required for a real audit. Set the Supabase/database environment variables from the existing `.env.example` files, create the private uploads bucket, and apply the migrations below before using uploads.
+
+## Hackathon demo path
+
+Use an authenticated personal or dev-test account for the upload-and-audit recording; the judge demo shortcut is a synthetic presentation mode and does not provide the authenticated upload/audit backend path.
+
+1. Open **Past bills** and upload `demo-data/oweme-synthetic-claims.csv` as the claims/EOB file.
+2. Upload `demo-data/oweme-synthetic-hsa-transactions.csv` and `demo-data/oweme-synthetic-apple-card.csv` as payment files.
+3. Select **Run audit**, wait for the results refresh, then open the review queue and **Action Center** for next steps.
+
+The synthetic files are intentionally invented. The expected story includes potential overpayments that still need provider confirmation, unmatched claims, and an unassigned medical payment—not guaranteed refunds.
 
 ## Local backend bootstrap
 

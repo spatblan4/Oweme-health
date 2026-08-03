@@ -24,11 +24,11 @@
           </button>
           <button class="nav-item" type="button" data-view="past">
             <span class="icon" aria-hidden="true">$</span>
-            Past Credits
+            Past Bills
           </button>
           <button class="nav-item" type="button" data-view="future">
             <span class="icon" aria-hidden="true">+</span>
-            Future Visits
+            New Visit
           </button>
           <button class="nav-item" type="button" data-view="actions">
             <span class="icon" aria-hidden="true">✓</span>
@@ -54,9 +54,9 @@
             </header>
 
             <div class="landing-center">
-              <p class="landing-kicker">Medical credits can hide in plain sight</p>
-              <h1 id="overview-title">Who still owes you?</h1>
-              <p class="landing-copy">Medical bills settle weeks after you pay. OweMe helps you find provider credits and remember when to check claims.</p>
+              <p class="landing-kicker">OweMe Health</p>
+              <h1 id="overview-title">Paid your medical bill? Check if you’re owed a refund.</h1>
+              <p class="landing-copy">When your EOB arrives weeks later, OweMe reminds you to compare it with what you paid—so potential refunds don’t get forgotten.</p>
 
               <div class="landing-actions">
                 <button class="primary-button landing-button" type="button" data-jump="past">Check past bills</button>
@@ -64,7 +64,7 @@
               </div>
 
               <div class="landing-proof" aria-label="Demo audit result">
-                <span>Demo audit found</span>
+                <span>Demo review flagged</span>
                 <strong id="metricCredit">$0.00</strong>
                 <span id="metricCreditHint">across 2 providers</span>
               </div>
@@ -77,9 +77,9 @@
         <section class="view" id="view-past" aria-labelledby="past-title">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">Past Credits</p>
-              <h2 id="past-title">Check old bills</h2>
-              <p>Match what you paid against what insurance says you owe.</p>
+              <p class="eyebrow">Past bills</p>
+              <h2 id="past-title">Find a potential refund in past bills</h2>
+              <p>Upload your payment record and EOB, then compare what you paid with your patient responsibility.</p>
             </div>
           </div>
 
@@ -150,8 +150,8 @@
           <section class="audit-summary is-hidden" id="auditSummary" aria-live="polite">
             <div>
               <p class="eyebrow">Audit result</p>
-              <h3><span id="auditTotalCredit">$0.00</span> possible credits found</h3>
-              <p id="auditSummaryMeta">Run an audit to see possible provider credits.</p>
+              <h3><span id="auditTotalCredit">$0.00</span> potential overpayment to review</h3>
+              <p id="auditSummaryMeta">Run a review to see whether any past payment may be an overpayment.</p>
             </div>
             <button class="summary-action" type="button" data-jump="actions">Review next steps</button>
           </section>
@@ -178,9 +178,9 @@
         <section class="view" id="view-future" aria-labelledby="future-title">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">Future Visits</p>
-              <h2 id="future-title">Log a visit before it disappears</h2>
-              <p>Record what you paid today. OweMe creates a claim-check date and later compares the EOB.</p>
+              <p class="eyebrow">New visit</p>
+              <h2 id="future-title">Track a visit while you wait for the EOB</h2>
+              <p>Record the provider and payment today. OweMe sets a check-in date so you remember to upload the EOB when it arrives.</p>
             </div>
           </div>
 
@@ -281,7 +281,7 @@
 
                   <div class="form-row two">
                     <label>
-                      Claim usually ready in
+                      Remind me to check EOB in
                       <select name="weeks">
                         <option value="2">2 weeks</option>
                         <option value="3" selected>3 weeks</option>
@@ -316,7 +316,7 @@
                 </div>
               </details>
 
-              <button class="primary-button full" type="submit">Add visit tracker</button>
+              <button class="primary-button full" type="submit">Save visit + EOB reminder</button>
             </form>
 
             <section class="data-section" aria-labelledby="visit-list-title">

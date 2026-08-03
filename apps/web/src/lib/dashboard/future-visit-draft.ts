@@ -183,3 +183,26 @@ export function buildVisitCreatePayload(draft: FutureVisitDraft) {
     ...(notes ? { notes } : {}),
   };
 }
+
+export function buildVisitEditDraft(visit: Record<string, unknown>): FutureVisitDraft {
+  const rawType = String(visit.visit_type ?? visit.visitType ?? "other");
+  const visitType = ({ medical: "Medical", dental: "Dental", vision: "Vision", other: "Therapy" } as Record<string, string>)[rawType] ?? "";
+  const visitDate = String(visit.visit_date ?? visit.visitDate ?? "");
+  const claimCheckAfter = String(visit.claim_check_after ?? visit.claimCheckAfter ?? "");
+  const days = claimCheckAfter && visitDate
+    ? Math.max(0, Math.round((new Date(`${claimCheckAfter}T12:00:00Z`).getTime() - new Date(`${visitDate}T12:00:00Z`).getTime()) / (24 * 60 * 60 * 1000)))
+    : 21;
+  const weeks = [1, 2, 3, 4, 6].reduce((closest, candidate) => Math.abs(candidate * 7 - days) < Math.abs(closest * 7 - days) ? candidate : closest, 3);
+
+  return {
+    provider: String(visit.provider_name ?? visit.providerName ?? ""),
+    visitType,
+    visitDate,
+    paidToday: visit.paid_amount ?? visit.paidAmount ? String(visit.paid_amount ?? visit.paidAmount) : "",
+    paidWith: String(visit.payment_method ?? visit.paymentMethod ?? ""),
+    needsReimbursement: Boolean(visit.reimbursement_needed ?? visit.reimbursementNeeded),
+    insurance: String(visit.insurance_name ?? visit.insuranceName ?? ""),
+    claimReadyIn: `${weeks} week${weeks === 1 ? "" : "s"}`,
+    notes: String(visit.notes ?? ""),
+  };
+}

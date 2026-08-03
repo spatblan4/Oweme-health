@@ -36,6 +36,7 @@ export async function createServerSupabaseClient() {
       },
     },
     cookieOptions: {
+      maxAge: 60 * 60 * 24 * 30,
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
       path: "/",
