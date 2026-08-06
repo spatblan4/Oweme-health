@@ -230,14 +230,6 @@ function paymentMethodText(value: unknown, fallback = "Payment method to confirm
   return text.replace(/^paid via\s+/i, "");
 }
 
-function amountWithPaymentSource(amount: unknown, source: unknown, fallback = "--") {
-  const amountLabel = detailText(amount, fallback);
-  if (amountLabel === fallback) {
-    return fallback;
-  }
-  return `${amountLabel} (${paymentSourceText(source)})`;
-}
-
 function daysBetween(start: unknown, end: unknown) {
   if (typeof start !== "string" || typeof end !== "string" || !start || !end) {
     return null;
@@ -422,37 +414,6 @@ function findingStatusLabel(finding: Record<string, unknown>) {
     return "Needs confirmation";
   }
   return "Needs review";
-}
-
-function findingConfidenceLabel(finding: Record<string, unknown>) {
-  const findingType = String(finding.finding_type ?? "");
-  if (findingType === "possible_credit") {
-    return "High";
-  }
-  if (candidatePayments(finding).length > 0) {
-    return "Medium";
-  }
-  if (findingType === "unassigned_medical_payment") {
-    return possibleClaims(finding).length > 0 ? "Medium" : "Low";
-  }
-  return "Low";
-}
-
-function findingConfidenceReason(finding: Record<string, unknown>) {
-  const candidate = candidatePayments(finding)[0];
-  const details = findingDetails(finding);
-  if (String(finding.finding_type ?? "") === "possible_credit") {
-    return "Claim amount and payment amount are both present, so the system can estimate the credit directly.";
-  }
-  if (candidate) {
-    const gap = daysBetween(details.service_date, candidate.payment_date);
-    const gapText = gap === null ? "near the service date" : `${Math.max(0, gap)} days after the service date`;
-    return `Payment timing and amount look plausible (${gapText}), but the merchant/provider still needs a human check.`;
-  }
-  if (String(finding.finding_type ?? "") === "unassigned_medical_payment") {
-    return "The payment looks medical, but the statement row does not identify a provider.";
-  }
-  return "The uploaded claim/payment evidence is incomplete.";
 }
 
 function findingCardSummary(finding: Record<string, unknown>) {

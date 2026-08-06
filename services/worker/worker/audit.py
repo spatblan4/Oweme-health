@@ -163,29 +163,6 @@ def _payment_provider_name(payment: dict) -> str:
     ).strip()
 
 
-def _is_user_confirmed_payment_for_group(group: dict[str, Any], payment: dict) -> bool:
-    """Explicit confirmations supplied by the user trump provider-label conflicts."""
-    provider = normalize_provider_for_confirmation(_payment_provider_name(payment))
-    if provider != "ali salehpour md dds":
-        return False
-
-    confirmed_pairs = {
-        ("2026-02-18", Decimal("125.00"), "2026-02-19", Decimal("275.00")),
-        ("2026-02-27", Decimal("605.20"), "2026-03-04", Decimal("1079.10")),
-    }
-    key = (
-        str(group.get("service_date") or ""),
-        group["responsibility"],
-        str(payment.get("payment_date") or ""),
-        _money(payment.get("amount")),
-    )
-    return key in confirmed_pairs
-
-
-def normalize_provider_for_confirmation(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
-
-
 def _looks_like_clinic_name(value: str) -> bool:
     return bool(
         re.search(
@@ -241,35 +218,6 @@ def _is_generic_medical_payment(payment: dict) -> bool:
         return not has_specific_alias
 
     return payment_source in {"medical"} and not has_specific_alias
-
-
-def _is_specific_medical_payment(payment: dict) -> bool:
-    if _is_generic_medical_payment(payment):
-        return False
-
-    aliases = [alias.lower() for alias in _provider_aliases(payment)]
-    payment_source = str(payment.get("payment_source") or "").lower()
-    raw_row = {}
-    payload = payment.get("normalized_payload")
-    if isinstance(payload, dict):
-        maybe_raw = payload.get("raw_row")
-        if isinstance(maybe_raw, dict):
-            raw_row = {str(key).lower(): str(value).lower() for key, value in maybe_raw.items()}
-
-    category = raw_row.get("category") or raw_row.get("classification") or ""
-    if category in {"medical", "healthcare", "health care"}:
-        return True
-
-    if payment_source == "medical":
-        return True
-
-    return any(
-        re.search(
-            r"\b(dental|dentist|dds|dmd|medical|clinic|hospital|health|care|orthodont|vision|doctor|physician|surgery|dermatology|radiology|laboratory|labcorp|quest|diagnostics)\b",
-            alias,
-        )
-        for alias in aliases
-    )
 
 
 def _days_between(left: Any, right: Any) -> int | None:
@@ -451,13 +399,6 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
 
             responsibility = group["responsibility"]
             amount = _money(payment.get("amount"))
-            if _is_user_confirmed_payment_for_group(group, payment):
-                total_score = 2.0
-                if total_score > best_score:
-                    best_score = total_score
-                    best_key = key
-                continue
-
             if name_score <= 0.25:
                 continue
 
@@ -474,10 +415,7 @@ def build_findings(claims: list[dict], payments: list[dict]) -> list[dict]:
                 best_key = key
 
         if best_key is not None:
-            confirmed_payment = dict(payment)
-            if _is_user_confirmed_payment_for_group(grouped_claims[best_key], payment):
-                confirmed_payment["_confirmation_source"] = "Confirmed by you"
-            grouped_claims[best_key]["matched_payments"].append(confirmed_payment)
+            grouped_claims[best_key]["matched_payments"].append(dict(payment))
             matched_payment_ids.add(payment_id)
 
     findings: list[dict] = []

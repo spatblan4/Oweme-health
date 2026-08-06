@@ -21,6 +21,7 @@ export async function POST() {
       path: "/",
       sameSite: "lax",
       httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
     });
     response.cookies.delete(DEMO_MODE_COOKIE);
     return response;

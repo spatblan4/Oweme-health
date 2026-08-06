@@ -12,9 +12,11 @@ export function createDemoLoginResponse(origin: string) {
     httpOnly: true,
   });
   response.cookies.set("oweme-user-id", DEMO_JUDGE_USER_ID, {
+    maxAge: 60 * 60 * 24 * 30,
     path: "/",
     sameSite: "lax",
     httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
   });
   return response;
 }

@@ -28,6 +28,7 @@ export async function GET(request: Request) {
       path: "/",
       sameSite: "lax",
       httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
     });
     return response;
   } catch {

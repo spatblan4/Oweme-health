@@ -35,7 +35,9 @@ export default async function DashboardPage({
         : undefined;
   const cookieStore = await cookies();
   const isDemoMode = cookieStore.get(DEMO_MODE_COOKIE)?.value === "1";
-  const isLocalDevMode = cookieStore.get("oweme-user-id")?.value === DEV_TEST_USER_ID;
+  const isLocalDevMode =
+    process.env.NODE_ENV !== "production" &&
+    cookieStore.get("oweme-user-id")?.value === DEV_TEST_USER_ID;
 
   let user: { id: string; email?: string | null } | null = null;
   if (isLocalDevMode) {

@@ -113,8 +113,8 @@ def mark_file_jobs_succeeded_for_file(file_id: str):
        set status = 'succeeded',
            started_at = coalesce(started_at, now()),
            finished_at = now()
-     where file_id = %s
-       and status in ('queued', 'running')
+      where file_id = %s
+        and status = 'queued'
     """
     with get_cursor() as cur:
         cur.execute(sql, (file_id,))

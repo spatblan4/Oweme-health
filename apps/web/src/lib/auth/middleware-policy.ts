@@ -1,3 +1,5 @@
+import { DEV_TEST_USER_ID } from "@/lib/auth/dev-login";
+
 type SupabaseMiddlewareAuthArgs = {
   hostname: string;
   localUserId: string | null;
@@ -15,7 +17,7 @@ export function shouldUseSupabaseMiddlewareAuth({
     return false;
   }
 
-  if (localUserId === "00000000-0000-0000-0000-000000000001") {
+  if (nodeEnv !== "production" && localUserId === DEV_TEST_USER_ID) {
     return false;
   }
 

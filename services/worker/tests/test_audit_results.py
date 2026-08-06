@@ -392,7 +392,7 @@ def test_build_findings_surfaces_cross_provider_hsa_payment_as_review_candidate_
     ]
 
 
-def test_build_findings_creates_confirmed_ali_credits_from_user_verified_hsa_payments():
+def test_build_findings_surfaces_cross_provider_ali_payments_as_review_candidates_not_confirmed_credits():
     findings = build_findings(
         claims=[
             {
@@ -432,30 +432,28 @@ def test_build_findings_creates_confirmed_ali_credits_from_user_verified_hsa_pay
         ],
     )
 
-    assert len(findings) == 2
-    credits = sorted(findings, key=lambda finding: finding["details"]["service_date"])
-    assert [finding["finding_type"] for finding in credits] == ["possible_credit", "possible_credit"]
-    assert [finding["title"] for finding in credits] == ["ALI SALEHPOUR MD DDS", "ALI SALEHPOUR MD DDS"]
-    assert credits[0]["details"] | {
-        "service_date": "2026-02-18",
-        "paid_amount": "275.00",
-        "responsibility_amount": "125.00",
-        "credit_amount": "150.00",
-        "payment_source": "Withdrawal",
-        "payment_date": "2026-02-19",
-        "claim_provider_name": "BAY AREA OSM",
-        "confirmation_source": "Confirmed by you",
-    } == credits[0]["details"]
-    assert credits[1]["details"] | {
-        "service_date": "2026-02-27",
-        "paid_amount": "1079.10",
-        "responsibility_amount": "605.20",
-        "credit_amount": "473.90",
-        "payment_source": "Withdrawal",
-        "payment_date": "2026-03-04",
-        "claim_provider_name": "BAY AREA OSM",
-        "confirmation_source": "Confirmed by you",
-    } == credits[1]["details"]
+    # The ALI SALEHPOUR payments are a different provider than the BAY AREA OSM
+    # claims. The worker must never fabricate a "Confirmed by you" credit; it
+    # may only surface the payments as review candidates for the user to confirm
+    # via the web applyFindingAction flow.
+    assert not any(finding["finding_type"] == "possible_credit" for finding in findings)
+    assert not any(
+        finding.get("details", {}).get("confirmation_source") == "Confirmed by you"
+        for finding in findings
+    )
+
+    review_findings = [
+        finding for finding in findings if finding["finding_type"] == "allocation_unclear"
+    ]
+    assert len(review_findings) == 2
+    assert {finding["title"] for finding in review_findings} == {"ALI SALEHPOUR MD DDS"}
+    for finding in review_findings:
+        assert finding["details"]["claim_provider_name"] == "BAY AREA OSM"
+        assert finding["details"]["candidate_payments"], "expected review candidates"
+        assert all(
+            candidate["match_hint"] == "Provider conflict"
+            for candidate in finding["details"]["candidate_payments"]
+        )
 
 
 def test_build_findings_does_not_match_placeholder_provider_names():

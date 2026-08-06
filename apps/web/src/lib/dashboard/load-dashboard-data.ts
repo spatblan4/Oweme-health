@@ -38,17 +38,23 @@ async function enrichCandidatePaymentSourceLabels(
   findings: Array<Record<string, unknown>>,
   getLabelsByIds: (paymentIds: string[]) => Promise<Map<string, string>>,
 ) {
-  const paymentIds = findings.flatMap((finding) =>
-    candidatePayments(finding)
-      .map((candidate) => String(candidate.payment_id ?? ""))
-      .filter(Boolean),
-  );
-
-  if (!paymentIds.length) {
-    return findings;
+  const missingPaymentIds = new Set<string>();
+  for (const finding of findings) {
+    for (const candidate of candidatePayments(finding)) {
+      if (String(candidate.payment_source_label ?? "").trim()) {
+        continue;
+      }
+      const paymentId = String(candidate.payment_id ?? "");
+      if (paymentId) {
+        missingPaymentIds.add(paymentId);
+      }
+    }
   }
 
-  const labelsById = await getLabelsByIds(paymentIds);
+  const labelsById = missingPaymentIds.size
+    ? await getLabelsByIds([...missingPaymentIds])
+    : new Map<string, string>();
+
   if (!labelsById.size) {
     return findings;
   }
@@ -60,6 +66,9 @@ async function enrichCandidatePaymentSourceLabels(
     }
 
     const nextCandidates = candidates.map((candidate) => {
+      if (String(candidate.payment_source_label ?? "").trim()) {
+        return candidate;
+      }
       const paymentId = String(candidate.payment_id ?? "");
       const sourceLabel = labelsById.get(paymentId);
       return sourceLabel ? { ...candidate, payment_source_label: sourceLabel } : candidate;

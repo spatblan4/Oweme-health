@@ -13,7 +13,7 @@ export async function middleware(request: NextRequest) {
   let userId: string | null = null;
   if (request.cookies.get(DEMO_MODE_COOKIE)?.value === "1" && shouldUseDemoModeCookie(pathname)) {
     userId = DEMO_JUDGE_USER_ID;
-  } else if (localUserId === DEV_TEST_USER_ID) {
+  } else if (process.env.NODE_ENV !== "production" && localUserId === DEV_TEST_USER_ID) {
     userId = DEV_TEST_USER_ID;
   }
   let response = NextResponse.next();
@@ -51,6 +51,7 @@ export async function middleware(request: NextRequest) {
       path: "/",
       sameSite: "lax",
       httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
     });
   } else {
     response.cookies.delete("oweme-user-id");

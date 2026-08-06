@@ -46,6 +46,28 @@ describe("shouldUseSupabaseMiddlewareAuth", () => {
       }),
     ).toBe(true);
   });
+
+  it("skips Supabase for the dev test user id in non-production environments", () => {
+    expect(
+      shouldUseSupabaseMiddlewareAuth({
+        hostname: "localhost",
+        localUserId: "00000000-0000-0000-0000-000000000001",
+        pathname: "/dashboard",
+        nodeEnv: "development",
+      }),
+    ).toBe(false);
+  });
+
+  it("probes Supabase for the dev test user id in production so a forged cookie cannot bypass auth", () => {
+    expect(
+      shouldUseSupabaseMiddlewareAuth({
+        hostname: "oweme.example",
+        localUserId: "00000000-0000-0000-0000-000000000001",
+        pathname: "/dashboard",
+        nodeEnv: "production",
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("shouldUseDemoModeCookie", () => {
