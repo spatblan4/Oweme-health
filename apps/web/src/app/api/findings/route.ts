@@ -5,7 +5,7 @@ import { listFindings } from "@/lib/findings/repository";
 
 export async function GET(request: Request) {
   try {
-    const userId = requireRequestUserId(request);
+    const userId = await requireRequestUserId(request);
     const result = await listFindings(userId);
     return NextResponse.json(result);
   } catch (error) {

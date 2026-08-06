@@ -9,7 +9,7 @@ type Params = {
 
 export async function PATCH(request: Request, { params }: Params) {
   try {
-    const userId = requireRequestUserId(request);
+    const userId = await requireRequestUserId(request);
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const { id } = await params;
     const result = await updateProvider(userId, id, body);

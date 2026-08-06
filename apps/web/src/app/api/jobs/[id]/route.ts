@@ -10,7 +10,7 @@ type Params = {
 
 export async function GET(request: Request, { params }: Params) {
   try {
-    const userId = requireRequestUserId(request);
+    const userId = await requireRequestUserId(request);
     const { id } = await params;
 
     const result = await getFileJob(

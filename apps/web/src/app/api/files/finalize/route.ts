@@ -8,7 +8,7 @@ import { confirmObjectExists } from "@/lib/files/storage";
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as { fileId?: string };
-    const userId = requireRequestUserId(request);
+    const userId = await requireRequestUserId(request);
     const result = await finalizeUpload(
       {
         userId,

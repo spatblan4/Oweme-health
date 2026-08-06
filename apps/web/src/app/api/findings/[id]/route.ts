@@ -9,7 +9,7 @@ type Params = {
 
 export async function PATCH(request: Request, { params }: Params) {
   try {
-    const userId = requireRequestUserId(request);
+    const userId = await requireRequestUserId(request);
     const body = (await request.json().catch(() => ({}))) as { status?: string };
     const { id } = await params;
     const result = await updateFinding(userId, id, body);

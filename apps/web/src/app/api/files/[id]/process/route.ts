@@ -11,7 +11,7 @@ type Params = {
 
 export async function POST(request: Request, { params }: Params) {
   try {
-    const userId = requireRequestUserId(request);
+    const userId = await requireRequestUserId(request);
     const body = (await request.json().catch(() => ({}))) as { jobType?: string };
     const { id } = await params;
 

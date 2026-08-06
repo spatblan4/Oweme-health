@@ -5,7 +5,7 @@ import { listProviders, upsertProvider } from "@/lib/providers/repository";
 
 export async function GET(request: Request) {
   try {
-    const userId = requireRequestUserId(request);
+    const userId = await requireRequestUserId(request);
     const result = await listProviders(userId);
     return NextResponse.json(result);
   } catch (error) {
@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const userId = requireRequestUserId(request);
+    const userId = await requireRequestUserId(request);
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const result = await upsertProvider(userId, body);
     return NextResponse.json(result);
