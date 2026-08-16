@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Work only in the live checkout `/Users/chongchongchao/Documents/hospital` on branch `codex/preserve-live-oweme-20260801`.
+- Work only in the live checkout `<repo-root>` on branch `codex/preserve-live-oweme-20260801`.
 - Do not change matching rules, worker allocation logic, audit data, or database data.
 - Do not operate the user's browser profile.
 - Use strict TDD: write or replace the failing test, run it red, implement minimal code, run it green.
@@ -200,7 +200,7 @@ it("renders candidate payment checkboxes selected by default with a selected-tot
 Run:
 
 ```bash
-cd /Users/chongchongchao/Documents/hospital/apps/web
+cd <repo-root>/apps/web
 npm test -- --no-cache src/components/dashboard.test.tsx
 ```
 
@@ -354,7 +354,7 @@ it("rejects an empty selected payment list for candidate findings", async () => 
 Run:
 
 ```bash
-cd /Users/chongchongchao/Documents/hospital/apps/web
+cd <repo-root>/apps/web
 npm test -- --no-cache src/lib/findings/repository.test.ts
 ```
 
@@ -491,7 +491,7 @@ await deps.insertManualAdjustment({
 Run:
 
 ```bash
-cd /Users/chongchongchao/Documents/hospital/apps/web
+cd <repo-root>/apps/web
 npm test -- --no-cache src/lib/findings/repository.test.ts
 ```
 
@@ -530,7 +530,7 @@ it("builds confirm-match payload with selected candidate payment IDs", () => {
 Run:
 
 ```bash
-cd /Users/chongchongchao/Documents/hospital/apps/web
+cd <repo-root>/apps/web
 npm test -- --no-cache src/components/dashboard.test.tsx
 ```
 
@@ -713,7 +713,7 @@ Show disabled helper text:
 Run:
 
 ```bash
-cd /Users/chongchongchao/Documents/hospital/apps/web
+cd <repo-root>/apps/web
 npm test -- --no-cache src/components/dashboard.test.tsx
 ```
 
@@ -840,7 +840,7 @@ Keep the checkbox list visible so revising does not need a separate modal.
 Run:
 
 ```bash
-cd /Users/chongchongchao/Documents/hospital/apps/web
+cd <repo-root>/apps/web
 npm test -- --no-cache src/components/dashboard.test.tsx
 ```
 
@@ -867,7 +867,7 @@ Expected: PASS.
 Run:
 
 ```bash
-cd /Users/chongchongchao/Documents/hospital/apps/web
+cd <repo-root>/apps/web
 npm test -- --no-cache src/components/dashboard.test.tsx src/lib/findings/repository.test.ts
 ```
 
@@ -878,7 +878,7 @@ Expected: PASS, with no failed tests.
 Run:
 
 ```bash
-cd /Users/chongchongchao/Documents/hospital/apps/web
+cd <repo-root>/apps/web
 npm test -- --no-cache src/app/api/auth/sync-session/route.test.ts src/lib/auth/middleware-policy.test.ts 'src/app/(app)/dashboard/page.test.tsx'
 ```
 
@@ -889,7 +889,7 @@ Expected: PASS, confirming the repair did not disturb auth/demo dashboard loadin
 Run:
 
 ```bash
-cd /Users/chongchongchao/Documents/hospital
+cd <repo-root>
 git diff --check
 git diff --cached --check
 ```
@@ -926,7 +926,7 @@ False
 Run:
 
 ```bash
-cd /Users/chongchongchao/Documents/hospital
+cd <repo-root>
 git diff -- apps/web/src/components/dashboard-shell.tsx apps/web/src/components/dashboard.test.tsx apps/web/src/lib/findings/repository.ts apps/web/src/lib/findings/repository.test.ts
 ```
 
@@ -937,7 +937,7 @@ Expected: diff includes only checkbox confirmation UI, selected-ID persistence, 
 Run:
 
 ```bash
-cd /Users/chongchongchao/Documents/hospital
+cd <repo-root>
 git status --short
 git add apps/web/src/components/dashboard-shell.tsx apps/web/src/components/dashboard.test.tsx apps/web/src/lib/findings/repository.ts apps/web/src/lib/findings/repository.test.ts
 git commit -m "Fix multi-candidate payment confirmation"
