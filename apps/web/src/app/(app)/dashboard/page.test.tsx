@@ -1,7 +1,7 @@
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { DEMO_MODE_COOKIE } from "@/lib/auth/demo-login";
+import { DEMO_JUDGE_EMAIL, DEMO_JUDGE_USER_ID, DEMO_MODE_COOKIE } from "@/lib/auth/demo-login";
 
 const mocks = vi.hoisted(() => ({
   cookies: vi.fn(),
@@ -79,6 +79,38 @@ describe("DashboardPage", () => {
     });
     expect(page.props.findings).toEqual([{ id: "real-finding-1", title: "Real audit result" }]);
     expect(page.props.flashMessage).toBe("Audit complete. Results refreshed.");
+    expect(mocks.loadSyntheticDashboardData).not.toHaveBeenCalled();
+  });
+
+  it("keeps judge demo on the upload-first state even when auditComplete is present", async () => {
+    mocks.cookies.mockResolvedValueOnce({
+      get: (name: string) =>
+        name === DEMO_MODE_COOKIE
+          ? { value: "1" }
+          : name === "oweme-user-id"
+            ? { value: DEMO_JUDGE_USER_ID }
+            : undefined,
+    });
+    mocks.getUser.mockResolvedValueOnce({
+      data: {
+        user: null,
+      },
+    });
+
+    const page = await DashboardPage({
+      searchParams: Promise.resolve({ view: "past", auditComplete: "1" }),
+    });
+
+    expect(page.props.currentUser).toEqual({
+      id: DEMO_JUDGE_USER_ID,
+      email: DEMO_JUDGE_EMAIL,
+      isDevTest: false,
+      isDemo: true,
+    });
+    expect(page.props.findings).toEqual([]);
+    expect(page.props.jobs).toEqual([]);
+    expect(page.props.visits).toEqual([]);
+    expect(page.props.pastAuditComplete).toBe(false);
     expect(mocks.loadSyntheticDashboardData).not.toHaveBeenCalled();
   });
 });

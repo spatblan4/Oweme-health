@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import {
   buildVisitCreatePayload,
@@ -27,6 +27,7 @@ type DashboardShellProps = {
 };
 
 type ViewKey = "overview" | "past" | "future" | "actions";
+type VisitTypeFilter = "all" | "dental" | "medical";
 
 const views: Array<{ key: ViewKey; label: string; icon: string }> = [
   { key: "overview", label: "Home", icon: "⌁" },
@@ -163,14 +164,37 @@ function futureFieldLabel(label: string) {
   );
 }
 
-type MatchFilterKey = "all" | "review" | "credit" | "unexplained";
+type MatchFilterKey = "all" | "review" | "waiting" | "credit" | "unexplained";
+
+function isPaymentOnlyFinding(finding: Record<string, unknown>) {
+  const findingType = String(finding.finding_type ?? "");
+  return findingType === "unassigned_medical_payment" || findingType === "unmatched_payment";
+}
+
+function isWaitingForPaymentFinding(finding: Record<string, unknown>) {
+  const findingType = String(finding.finding_type ?? "");
+  if (findingType === "unassigned_medical_payment" || findingType === "unexplained_payment") {
+    return false;
+  }
+
+  const details = findingDetails(finding);
+  if (hasConfirmedPayments(finding) || candidatePayments(finding).length > 0 || hasAmount(details.paid_amount)) {
+    return false;
+  }
+
+  return hasAmount(details.responsibility_amount);
+}
 
 function getFilteredFindings(items: Array<Record<string, unknown>>, matchFilter: MatchFilterKey) {
   const openItems = items.filter((finding) => String(finding.status ?? "open") === "open");
   if (matchFilter === "review") {
     return openItems.filter((finding) =>
-      ["allocation_unclear", "possible_credit"].includes(String(finding.finding_type ?? "")),
+      ["allocation_unclear", "possible_credit"].includes(String(finding.finding_type ?? "")) &&
+      !isWaitingForPaymentFinding(finding),
     );
+  }
+  if (matchFilter === "waiting") {
+    return openItems.filter(isWaitingForPaymentFinding);
   }
   if (matchFilter === "credit") {
     return openItems.filter((finding) => String(finding.finding_type ?? "") === "possible_credit");
@@ -307,6 +331,51 @@ function validCandidatePaymentIds(finding: Record<string, unknown>) {
   return candidatePayments(finding).map(candidatePaymentId).filter(Boolean);
 }
 
+function providerTokens(value: unknown) {
+  return normalizeProviderKey(stripDemoSuffix(value))
+    .split(/[^a-z0-9]+/i)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3);
+}
+
+function providersLikelyMatch(left: unknown, right: unknown) {
+  const leftKey = normalizeProviderKey(stripDemoSuffix(left));
+  const rightKey = normalizeProviderKey(stripDemoSuffix(right));
+  if (!leftKey || !rightKey) return false;
+  if (leftKey === rightKey) return true;
+  if (leftKey.includes(rightKey) || rightKey.includes(leftKey)) return true;
+
+  const leftTokens = new Set(providerTokens(leftKey));
+  const rightTokens = providerTokens(rightKey);
+  const overlap = rightTokens.filter((token) => leftTokens.has(token)).length;
+  return overlap >= 2;
+}
+
+function candidateAutoSelectionReason(
+  finding: Record<string, unknown>,
+  candidate: Record<string, unknown>,
+) {
+  const details = findingDetails(finding);
+  const providerMatches = providersLikelyMatch(
+    details.claim_provider_name ?? details.provider_name ?? finding.provider_name,
+    candidate.provider_name,
+  );
+  const dayGap = daysBetween(details.service_date, candidate.payment_date);
+  const withinDateWindow = dayGap !== null && Math.abs(dayGap) <= 14;
+
+  if (providerMatches && withinDateWindow) {
+    return null;
+  }
+
+  if (!providerMatches && !withinDateWindow) {
+    return "Not auto-selected because the provider is different and the payment date is too far from this visit.";
+  }
+  if (!providerMatches) {
+    return "Not auto-selected because the provider name does not closely match this visit.";
+  }
+  return "Not auto-selected because the payment date is outside the likely window for this visit.";
+}
+
 function confirmedPaymentIds(finding: Record<string, unknown>) {
   const raw = findingDetails(finding).confirmed_payment_ids;
   return Array.isArray(raw) ? raw.map(String).filter(Boolean) : [];
@@ -314,7 +383,10 @@ function confirmedPaymentIds(finding: Record<string, unknown>) {
 
 function initialSelectedPaymentIds(finding: Record<string, unknown>) {
   const confirmed = confirmedPaymentIds(finding);
-  return confirmed.length ? confirmed : validCandidatePaymentIds(finding);
+  if (confirmed.length) return confirmed;
+  return candidatePayments(finding)
+    .filter((candidate) => candidatePaymentId(candidate) && !candidateAutoSelectionReason(finding, candidate))
+    .map(candidatePaymentId);
 }
 
 function selectedCandidatePayments(finding: Record<string, unknown>, selectedIds: string[]) {
@@ -417,6 +489,9 @@ function findingStatusLabel(finding: Record<string, unknown>) {
   }
   if (findingType === "unassigned_medical_payment") {
     return "Unassigned payment";
+  }
+  if (isWaitingForPaymentFinding(finding)) {
+    return "Waiting for payment";
   }
   if (hasBundledPaymentCandidate(finding)) {
     return "Needs confirmation";
@@ -921,11 +996,13 @@ export function DashboardShell({
   const [isRunningAudit, setIsRunningAudit] = useState(false);
   const [futureVisitDraft, setFutureVisitDraft] = useState(createDefaultFutureVisitDraft);
   const [expandedVisitId, setExpandedVisitId] = useState<string | null>(null);
+  const [visitTypeFilter, setVisitTypeFilter] = useState<VisitTypeFilter>("all");
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const [futureSplitPercent, setFutureSplitPercent] = useState(48);
   const [isResizingFutureSplit, setIsResizingFutureSplit] = useState(false);
   const [futureVisitStatus, setFutureVisitStatus] = useState("");
   const [isSavingVisit, setIsSavingVisit] = useState(false);
+  const [deletingVisitId, setDeletingVisitId] = useState<string | null>(null);
   const [manualFallbackDraft, setManualFallbackDraft] = useState({
     paymentSource: "Receipt",
     providerName: "",
@@ -949,10 +1026,26 @@ export function DashboardShell({
   const [isProviderSuggestionsOpen, setIsProviderSuggestionsOpen] = useState(false);
   const [isManualFallbackOpen, setIsManualFallbackOpen] = useState(false);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const [showSavedPastResults, setShowSavedPastResults] = useState(false);
 
   const demoLikeAccount = Boolean(currentUser?.isDemo || currentUser?.isDevTest);
-  const showDemoResults = !demoLikeAccount || pastAuditComplete;
-  const displayedFindingItems = showDemoResults ? findingItems : [];
+  const showPastResults = activeView !== "past" || pastAuditComplete || showSavedPastResults;
+  const displayedFindingItems = showPastResults ? findingItems : [];
+
+  useEffect(() => {
+    if (!pastAuditComplete || typeof window === "undefined") {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("auditComplete") !== "1") {
+      return;
+    }
+
+    url.searchParams.delete("auditComplete");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [pastAuditComplete]);
+
   const totalPossibleCredit = useMemo(() => {
     return displayedFindingItems.reduce((sum, finding) => sum + findingCreditAmount(finding), 0);
   }, [displayedFindingItems]);
@@ -979,10 +1072,26 @@ export function DashboardShell({
   const filteredFindings = useMemo(() => {
     return getFilteredFindings(displayedFindingItems, matchFilter);
   }, [displayedFindingItems, matchFilter]);
+  const reviewQueueFindings = useMemo(
+    () => filteredFindings.filter((finding) => !isWaitingForPaymentFinding(finding) && !isPaymentOnlyFinding(finding)),
+    [filteredFindings],
+  );
+  const waitingForPaymentFindings = useMemo(
+    () => filteredFindings.filter(isWaitingForPaymentFinding),
+    [filteredFindings],
+  );
+  const paymentOnlyFindings = useMemo(
+    () => filteredFindings.filter(isPaymentOnlyFinding),
+    [filteredFindings],
+  );
+  const visibleFindingItems = useMemo(
+    () => [...reviewQueueFindings, ...waitingForPaymentFindings, ...paymentOnlyFindings],
+    [reviewQueueFindings, waitingForPaymentFindings, paymentOnlyFindings],
+  );
   const selectedFinding =
     selectedFindingId
-      ? filteredFindings.find((finding) => String(finding.id) === selectedFindingId) ?? null
-      : filteredFindings[0] ?? null;
+      ? visibleFindingItems.find((finding) => String(finding.id) === selectedFindingId) ?? null
+      : visibleFindingItems[0] ?? null;
   const selectedFindingKey = selectedFinding ? String(selectedFinding.id) : "";
   const currentSelectedCandidatePaymentIds =
     selectedFinding && Object.prototype.hasOwnProperty.call(selectedCandidatePaymentIdsByFinding, selectedFindingKey)
@@ -1426,6 +1535,42 @@ export function DashboardShell({
       setFutureVisitStatus(error instanceof Error ? error.message : "Failed to update visit.");
     } finally {
       setIsSavingVisit(false);
+    }
+  }
+
+  async function handleDeleteVisit(visit: Record<string, unknown>) {
+    const visitId = String(visit.id ?? "");
+    if (!visitId) return;
+
+    const providerName = String(visit.provider_name ?? visit.providerName ?? "this visit");
+    const shouldDelete = window.confirm(`Delete ${providerName} from tracked visits?`);
+    if (!shouldDelete) return;
+
+    setDeletingVisitId(visitId);
+    setFutureVisitStatus("Deleting visit...");
+
+    try {
+      const response = await fetch(`/api/visits/${encodeURIComponent(visitId)}`, {
+        method: "DELETE",
+      });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        throw new Error(body?.error ?? "Failed to delete visit.");
+      }
+
+      setVisitItems((current) => current.filter((item) => String(item.id) !== visitId));
+      if (editingVisitId === visitId) {
+        setEditingVisitId(null);
+        setFutureVisitDraft(createDefaultFutureVisitDraft());
+      }
+      if (expandedVisitId === visitId) {
+        setExpandedVisitId(null);
+      }
+      setFutureVisitStatus("Visit deleted.");
+    } catch (error) {
+      setFutureVisitStatus(error instanceof Error ? error.message : "Failed to delete visit.");
+    } finally {
+      setDeletingVisitId(null);
     }
   }
 
@@ -2132,7 +2277,7 @@ export function DashboardShell({
                   {sectionHeading(
                     "",
                     "Find a potential refund in past bills",
-                    demoLikeAccount && !showDemoResults
+                    !showPastResults
                       ? "Start by adding the claim/EOB and payment/receipt records you want OweMe to compare."
                       : "Match what you paid against what insurance says you owe.",
                   )}
@@ -2187,6 +2332,24 @@ export function DashboardShell({
                             ? "Files selected."
                             : "No files selected.")}
                       </span>
+                    ) : null}
+                    {!pastAuditComplete && !showSavedPastResults && findingItems.length ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowSavedPastResults(true)}
+                        style={{
+                          borderRadius: 18,
+                          border: "1px solid #dbe4ef",
+                          background: "#ffffff",
+                          color: "#152235",
+                          padding: "15px 20px",
+                          fontWeight: 700,
+                          fontSize: 15,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Show saved results
+                      </button>
                     ) : null}
                   </div>
 
@@ -2339,7 +2502,7 @@ export function DashboardShell({
                 </div>,
               )}
 
-              {showDemoResults ? surface(
+              {showPastResults ? surface(
                 <div style={{ padding: 28, display: "grid", gap: 20 }}>
                   <h3 style={{ margin: 0, fontSize: 30, lineHeight: 1.1, color: "#152235" }}>
                     <span style={{ color: "#117a72" }}>{formatCurrency(totalPossibleCredit)}</span> possible
@@ -2357,14 +2520,14 @@ export function DashboardShell({
                     {surface(
                       <div style={{ padding: 22, display: "grid", gap: 14 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-                          <h3 style={{ margin: 0, fontSize: 22 }}>Review queue</h3>
+                          <h3 style={{ margin: 0, fontSize: 22 }}>Claims that need review</h3>
                           {pill(
-                            `${filteredFindings.length} item${filteredFindings.length === 1 ? "" : "s"}`,
-                            filteredFindings.length ? "amber" : "slate",
+                            `${reviewQueueFindings.length} item${reviewQueueFindings.length === 1 ? "" : "s"}`,
+                            reviewQueueFindings.length ? "amber" : "slate",
                           )}
                         </div>
-                        {filteredFindings.length ? (
-                          filteredFindings.map((finding) => {
+                        {reviewQueueFindings.length ? (
+                          reviewQueueFindings.map((finding) => {
                             const details = findingDetails(finding);
                             const findingType = String(finding.finding_type ?? "");
                             const isSelected = selectedFinding && String(selectedFinding.id) === String(finding.id);
@@ -2587,6 +2750,142 @@ export function DashboardShell({
                             </div>
                           </div>
                         )}
+                        {waitingForPaymentFindings.length ? (
+                          <div
+                            style={{
+                              borderRadius: 18,
+                              border: "1px solid #dbe4ef",
+                              background: "#fbfdff",
+                              padding: 18,
+                              display: "grid",
+                              gap: 12,
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                              <strong style={{ fontSize: 18, color: "#152235" }}>Waiting for payment evidence</strong>
+                              {pill(
+                                `${waitingForPaymentFindings.length} item${waitingForPaymentFindings.length === 1 ? "" : "s"}`,
+                                "slate",
+                              )}
+                            </div>
+                            <span style={{ color: "#617086", fontSize: 14, lineHeight: 1.5 }}>
+                              These EOBs were parsed correctly, but OweMe has not found reliable payment evidence for them yet.
+                            </span>
+                            <div style={{ display: "grid", gap: 10 }}>
+                              {waitingForPaymentFindings.map((finding) => {
+                                const details = findingDetails(finding);
+                                const isSelected =
+                                  selectedFinding && String(selectedFinding.id) === String(finding.id);
+
+                                return (
+                                  <button
+                                    key={String(finding.id)}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedFindingId(String(finding.id));
+                                      setFindingActionStatus("");
+                                      setCreditReviewMode("combined");
+                                      setCreditReviewDraft(null);
+                                    }}
+                                    style={{
+                                      textAlign: "left",
+                                      border: isSelected ? "1px solid #a6c5df" : "1px solid #e3ebf4",
+                                      borderRadius: 16,
+                                      padding: 14,
+                                      display: "grid",
+                                      gap: 8,
+                                      background: isSelected ? "#f8fbff" : "#ffffff",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start" }}>
+                                      <div style={{ display: "grid", gap: 4 }}>
+                                        <strong style={{ fontSize: 16, color: "#152235" }}>
+                                          {findingProviderName(finding)}
+                                        </strong>
+                                        <span style={{ color: "#617086", fontSize: 14 }}>
+                                          Visit {detailText(details.service_date, "date not recorded")}
+                                        </span>
+                                      </div>
+                                      {pill("Waiting for payment", "slate")}
+                                    </div>
+                                    <span style={{ color: "#617086", fontSize: 14, lineHeight: 1.45 }}>
+                                      EOB {detailText(details.responsibility_amount, "--")} · no payment found yet
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
+                        {paymentOnlyFindings.length ? (
+                          <div
+                            style={{
+                              borderRadius: 18,
+                              border: "1px solid #dbe4ef",
+                              background: "#fbfdff",
+                              padding: 18,
+                              display: "grid",
+                              gap: 12,
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                              <strong style={{ fontSize: 18, color: "#152235" }}>Payments not linked to any EOB yet</strong>
+                              {pill(
+                                `${paymentOnlyFindings.length} item${paymentOnlyFindings.length === 1 ? "" : "s"}`,
+                                "slate",
+                              )}
+                            </div>
+                            <span style={{ color: "#617086", fontSize: 14, lineHeight: 1.5 }}>
+                              These payments were parsed successfully, but OweMe has not linked them to a claim/EOB yet.
+                            </span>
+                            <div style={{ display: "grid", gap: 10 }}>
+                              {paymentOnlyFindings.map((finding) => {
+                                const details = findingDetails(finding);
+                                const isSelected =
+                                  selectedFinding && String(selectedFinding.id) === String(finding.id);
+
+                                return (
+                                  <button
+                                    key={String(finding.id)}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedFindingId(String(finding.id));
+                                      setFindingActionStatus("");
+                                      setCreditReviewMode("combined");
+                                      setCreditReviewDraft(null);
+                                    }}
+                                    style={{
+                                      textAlign: "left",
+                                      border: isSelected ? "1px solid #a6c5df" : "1px solid #e3ebf4",
+                                      borderRadius: 16,
+                                      padding: 14,
+                                      display: "grid",
+                                      gap: 8,
+                                      background: isSelected ? "#f8fbff" : "#ffffff",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start" }}>
+                                      <div style={{ display: "grid", gap: 4 }}>
+                                        <strong style={{ fontSize: 16, color: "#152235" }}>
+                                          {findingProviderName(finding)}
+                                        </strong>
+                                        <span style={{ color: "#617086", fontSize: 14 }}>
+                                          Payment {detailText(details.payment_date, "date not recorded")}
+                                        </span>
+                                      </div>
+                                      {pill("No EOB matched yet", "slate")}
+                                    </div>
+                                    <span style={{ color: "#617086", fontSize: 14, lineHeight: 1.45 }}>
+                                      Paid {detailText(details.paid_amount, "--")} · {paymentMethodText(details.payment_source, "Payment method to confirm")}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>,
                     )}
 
@@ -2603,11 +2902,13 @@ export function DashboardShell({
                               textTransform: "uppercase",
                             }}
                           >
-                            Selected visit
+                            {isPaymentOnlyFinding(selectedFinding) ? "Selected payment" : "Selected visit"}
                           </p>
                           <h3 style={{ margin: 0, fontSize: 22 }}>{findingProviderName(selectedFinding)}</h3>
                           <span style={{ color: "#617086", fontSize: 14 }}>
-                            Service date: {detailText(findingDetails(selectedFinding).service_date, "Date to confirm")}
+                            {isPaymentOnlyFinding(selectedFinding)
+                              ? `Payment date: ${detailText(findingDetails(selectedFinding).payment_date, "Date to confirm")}`
+                              : `Service date: ${detailText(findingDetails(selectedFinding).service_date, "Date to confirm")}`}
                           </span>
                         </div>
                         {selectedFinding ? (
@@ -2959,11 +3260,11 @@ export function DashboardShell({
                                 </div>
                               </div>
                             ) : null}
-                            {String(selectedFinding.finding_type ?? "") === "unassigned_medical_payment" ? (
+                            {isPaymentOnlyFinding(selectedFinding) ? (
                               <>
                                 <div style={{ display: "grid", gap: 12 }}>
                                   <div style={{ borderRadius: 18, border: "1px solid #e3ebf4", padding: 16, display: "grid", gap: 8 }}>
-                                    <strong style={{ fontSize: 16 }}>Bank statement payment</strong>
+                                    <strong style={{ fontSize: 16 }}>Payment record</strong>
                                     <span style={{ color: "#617086" }}>
                                       Payment date: {detailText(findingDetails(selectedFinding).payment_date)}
                                     </span>
@@ -2977,7 +3278,7 @@ export function DashboardShell({
                                 </div>
 
                                 <div style={{ borderRadius: 18, border: "1px solid #e3ebf4", padding: 16, display: "grid", gap: 10 }}>
-                                  <strong style={{ fontSize: 16 }}>Why this is still unassigned</strong>
+                                  <strong style={{ fontSize: 16 }}>Why no EOB is linked yet</strong>
                                   <div style={{ display: "grid", gap: 8 }}>
                                     {findingEvidenceBullets(selectedFinding).map((bullet) => (
                                       <span key={bullet} style={{ color: "#617086", lineHeight: 1.45 }}>
@@ -2988,7 +3289,7 @@ export function DashboardShell({
                                 </div>
 
                                 <div style={{ borderRadius: 18, border: "1px solid #e3ebf4", padding: 16, display: "grid", gap: 10 }}>
-                                  <strong style={{ fontSize: 16 }}>Possible visits to assign</strong>
+                                  <strong style={{ fontSize: 16 }}>Possible EOBs / visits to assign</strong>
                                   <div style={{ display: "grid", gap: 10 }}>
                                     {possibleClaims(selectedFinding).length ? (
                                       possibleClaims(selectedFinding).map((claim) => (
@@ -3069,6 +3370,7 @@ export function DashboardShell({
                                   {candidatePayments(selectedFinding).map((candidate) => {
                                     const candidateId = candidatePaymentId(candidate);
                                     const checked = candidateId ? currentSelectedCandidatePaymentIds.includes(candidateId) : false;
+                                    const autoSelectionReason = candidateAutoSelectionReason(selectedFinding, candidate);
                                     return (
                                       <label
                                         key={String(candidate.payment_id ?? candidate.provider_name ?? candidate.amount)}
@@ -3121,6 +3423,11 @@ export function DashboardShell({
                                           <span style={{ color: "#617086" }}>
                                             Payment method: {candidatePaymentSourceText(candidate, "Card / receipt line item")}
                                           </span>
+                                          {!checked && autoSelectionReason ? (
+                                            <span style={{ color: "#b56411", fontSize: 12, lineHeight: 1.45 }}>
+                                              {autoSelectionReason}
+                                            </span>
+                                          ) : null}
                                         </div>
                                       </label>
                                     );
@@ -3714,8 +4021,35 @@ export function DashboardShell({
                     {pill(`${visitItems.length} visit${visitItems.length === 1 ? "" : "s"}`, visitItems.length ? "teal" : "slate")}
                   </div>
 
-                  {visitItems.length ? (
-                    visitItems.map((visit) => (
+                  <div role="tablist" aria-label="Filter tracked visits by type" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {(["all", "dental", "medical"] as const).map((filter) => {
+                      const active = visitTypeFilter === filter;
+                      return (
+                        <button
+                          key={filter}
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          onClick={() => setVisitTypeFilter(filter)}
+                          style={{
+                            borderRadius: 999,
+                            border: active ? "1px solid #117a72" : "1px solid #dbe4ef",
+                            background: active ? "#def4f1" : "#ffffff",
+                            color: active ? "#0f766d" : "#617086",
+                            padding: "8px 14px",
+                            fontSize: 13,
+                            fontWeight: 800,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {filter === "all" ? "All" : filter.charAt(0).toUpperCase() + filter.slice(1)}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {visitItems.filter((visit) => visitTypeFilter === "all" || String(visit.visit_type ?? visit.visitType ?? "").toLowerCase() === visitTypeFilter).length ? (
+                    visitItems.filter((visit) => visitTypeFilter === "all" || String(visit.visit_type ?? visit.visitType ?? "").toLowerCase() === visitTypeFilter).map((visit) => (
                       <div
                         key={String(visit.id)}
                         style={{
@@ -3779,15 +4113,38 @@ export function DashboardShell({
                                 <span style={{ color: "#152235", fontSize: 13, lineHeight: 1.4 }}>{String(value)}</span>
                               </div>
                             ))}
-                            <button type="button" onClick={() => startEditingVisit(visit)} style={{ justifySelf: "start", borderRadius: 10, border: "1px solid #b9e6df", background: "#def4f1", color: "#0f766d", padding: "9px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
-                              Edit visit
-                            </button>
+                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                              <button type="button" onClick={() => startEditingVisit(visit)} style={{ justifySelf: "start", borderRadius: 10, border: "1px solid #b9e6df", background: "#def4f1", color: "#0f766d", padding: "9px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+                                Edit visit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteVisit(visit)}
+                                disabled={deletingVisitId === String(visit.id)}
+                                style={{
+                                  justifySelf: "start",
+                                  borderRadius: 10,
+                                  border: "1px solid #f2d3d0",
+                                  background: "#fff5f4",
+                                  color: "#b44c43",
+                                  padding: "9px 14px",
+                                  fontSize: 13,
+                                  fontWeight: 800,
+                                  cursor: deletingVisitId === String(visit.id) ? "wait" : "pointer",
+                                  opacity: deletingVisitId === String(visit.id) ? 0.7 : 1,
+                                }}
+                              >
+                                {deletingVisitId === String(visit.id) ? "Deleting..." : "Delete visit"}
+                              </button>
+                            </div>
                           </div>
                         ) : null}
                       </div>
                     ))
                   ) : (
-                    <div style={{ color: "#617086", fontSize: 14 }}>No visits tracked yet.</div>
+                    <div style={{ color: "#617086", fontSize: 14 }}>
+                      {visitItems.length ? `No ${visitTypeFilter} visits tracked yet.` : "No visits tracked yet."}
+                    </div>
                   )}
                 </div>,
               )}

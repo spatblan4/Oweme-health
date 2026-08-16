@@ -183,11 +183,21 @@ def test_build_findings_does_not_match_same_day_specific_medical_merchant_withou
     )
 
     assert len(findings) == 1
-    claim_finding = findings[0]
-    assert claim_finding["title"] == "Stone Creek Village De"
+    claim_finding = next(finding for finding in findings if finding["finding_type"] == "allocation_unclear")
+    assert claim_finding["title"] == "JAMES D KIM"
     assert claim_finding["finding_type"] == "allocation_unclear"
     assert claim_finding["details"]["claim_provider_name"] == "JAMES D KIM"
-    assert claim_finding["details"]["candidate_payments"][0]["match_hint"] == "Provider conflict"
+    assert claim_finding["details"]["candidate_payments"] == [
+        {
+            "payment_id": "payment-1",
+            "provider_name": "Stone Creek Village De",
+            "payment_date": "2026-05-13",
+            "amount": "142.00",
+            "payment_source": "Purchase",
+            "payment_source_label": "Card purchase",
+            "match_hint": "Possible bundled payment",
+        }
+    ]
 
 
 def test_build_findings_retains_multiple_payment_candidates_with_source_file_label():
@@ -241,13 +251,30 @@ def test_build_findings_retains_multiple_payment_candidates_with_source_file_lab
     )
 
     assert len(findings) == 1
-    candidates = findings[0]["details"]["candidate_payments"]
-    assert [candidate["amount"] for candidate in candidates] == ["133.00", "142.00"]
-    assert [candidate["payment_source_label"] for candidate in candidates] == ["Apple Card", "Apple Card"]
-    assert [candidate["payment_source"] for candidate in candidates] == ["Purchase", "Purchase"]
+    claim_finding = next(finding for finding in findings if finding["finding_type"] == "allocation_unclear")
+    assert claim_finding["details"]["candidate_payments"] == [
+        {
+            "payment_id": "payment-133",
+            "provider_name": "Stone Creek Village De",
+            "payment_date": "2026-05-13",
+            "amount": "133.00",
+            "payment_source": "Purchase",
+            "payment_source_label": "Apple Card",
+            "match_hint": "Possible bundled payment",
+        },
+        {
+            "payment_id": "payment-142",
+            "provider_name": "Stone Creek Village De",
+            "payment_date": "2026-05-13",
+            "amount": "142.00",
+            "payment_source": "Purchase",
+            "payment_source_label": "Apple Card",
+            "match_hint": "Possible bundled payment",
+        },
+    ]
 
 
-def test_build_findings_keeps_same_day_medical_payment_unmatched_when_provider_identity_is_unverified():
+def test_build_findings_surfaces_same_day_clinic_payment_as_candidate_for_doctor_claim():
     findings = build_findings(
         claims=[
             {
@@ -284,11 +311,21 @@ def test_build_findings_keeps_same_day_medical_payment_unmatched_when_provider_i
     )
 
     assert len(findings) == 1
-    claim_finding = findings[0]
-    assert claim_finding["title"] == "Stone Creek Village De"
+    claim_finding = next(finding for finding in findings if finding["finding_type"] == "allocation_unclear")
+    assert claim_finding["title"] == "JAMES D KIM"
     assert claim_finding["finding_type"] == "allocation_unclear"
     assert claim_finding["details"]["claim_provider_name"] == "JAMES D KIM"
-    assert claim_finding["details"]["candidate_payments"][0]["match_hint"] == "Provider conflict"
+    assert claim_finding["details"]["candidate_payments"] == [
+        {
+            "payment_id": "payment-1",
+            "provider_name": "Stone Creek Village De",
+            "payment_date": "2026-05-13",
+            "amount": "142.00",
+            "payment_source": "Purchase",
+            "payment_source_label": "Card purchase",
+            "match_hint": "Possible bundled payment",
+        }
+    ]
 
 
 def test_build_findings_surfaces_bundled_payment_candidates_when_exact_match_is_missing():
@@ -390,6 +427,63 @@ def test_build_findings_surfaces_cross_provider_hsa_payment_as_review_candidate_
             "match_hint": "Provider conflict",
         }
     ]
+
+
+def test_build_findings_does_not_surface_specific_card_merchants_as_cross_provider_candidates():
+    findings = build_findings(
+        claims=[
+            {
+                "id": "claim-1",
+                "provider_name_raw": "LABORATORY CORPORATION OF AMERICA",
+                "provider_name_normalized": "laboratory corporation of america",
+                "service_date": "2026-04-08",
+                "patient_responsibility": "13.37",
+                "status": "processed",
+            }
+        ],
+        payments=[
+            {
+                "id": "payment-133",
+                "provider_name_raw": "Stone Creek Village De",
+                "provider_name_normalized": "stone creek village de",
+                "payment_date": "2026-05-13",
+                "amount": "133.00",
+                "payment_source": "Purchase",
+                "normalized_payload": {
+                    "provider_aliases": [
+                        "Stone Creek Village De",
+                        "STONE CREEK VILLAGE DE463 CANYON DEL REY BLVD DEL REY OA93940 CA USA",
+                        "Medical",
+                    ],
+                    "raw_row": {"Category": "Medical", "Type": "Purchase"},
+                },
+            },
+            {
+                "id": "payment-142",
+                "provider_name_raw": "Stone Creek Village De",
+                "provider_name_normalized": "stone creek village de",
+                "payment_date": "2026-05-13",
+                "amount": "142.00",
+                "payment_source": "Purchase",
+                "normalized_payload": {
+                    "provider_aliases": [
+                        "Stone Creek Village De",
+                        "STONE CREEK VILLAGE DE463 CANYON DEL REY BLVD DEL REY OA93940 CA USA",
+                        "Medical",
+                    ],
+                    "raw_row": {"Category": "Medical", "Type": "Purchase"},
+                },
+            },
+        ],
+    )
+
+    assert len(findings) == 2
+    claim_finding = next(finding for finding in findings if finding["finding_type"] == "allocation_unclear")
+    unmatched_payment = next(finding for finding in findings if finding["finding_type"] == "unmatched_payment")
+    assert claim_finding["title"] == "LABORATORY CORPORATION OF AMERICA"
+    assert claim_finding["details"]["candidate_payments"] == []
+    assert unmatched_payment["title"] == "Stone Creek Village De"
+    assert unmatched_payment["details"]["paid_amount"] == "275.00"
 
 
 def test_build_findings_creates_confirmed_ali_credits_from_user_verified_hsa_payments():

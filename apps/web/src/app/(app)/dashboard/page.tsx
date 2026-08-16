@@ -57,15 +57,14 @@ export default async function DashboardPage({
 
   const hasRealSignedInUser = Boolean(user && user.id !== DEMO_JUDGE_USER_ID);
   if (isDemoMode && !hasRealSignedInUser) {
-    const data = loadSyntheticDashboardData();
     return (
       <DashboardShell
-        jobs={data.jobs}
-        visits={data.visits}
-        findings={data.findings}
+        jobs={[]}
+        visits={[]}
+        findings={[]}
         initialView={initialView}
         flashMessage={flashMessage}
-        pastAuditComplete={params?.auditComplete === "1"}
+        pastAuditComplete={false}
         currentUser={{
           id: DEMO_JUDGE_USER_ID,
           email: DEMO_JUDGE_EMAIL,

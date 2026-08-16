@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createVisit, listVisits, updateVisit } from "./repository";
+import { createVisit, deleteVisit, listVisits, updateVisit } from "./repository";
 
 describe("visits repository helpers", () => {
   it("lists visits for the current user", async () => {
@@ -73,5 +73,14 @@ describe("visits repository helpers", () => {
       notes: "Updated",
     });
   });
-});
 
+  it("deletes an owned visit", async () => {
+    const deleteOwnedVisit = vi.fn().mockResolvedValue(true);
+
+    await deleteVisit("user-1", "visit-1", {
+      deleteOwnedVisit,
+    });
+
+    expect(deleteOwnedVisit).toHaveBeenCalledWith("user-1", "visit-1");
+  });
+});

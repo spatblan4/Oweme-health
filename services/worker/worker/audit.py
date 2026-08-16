@@ -195,6 +195,46 @@ def _looks_like_clinic_name(value: str) -> bool:
     )
 
 
+def _looks_like_person_provider_name(value: str) -> bool:
+    raw = str(value or "").strip()
+    lowered = raw.lower()
+    if _looks_like_clinic_name(lowered):
+        return False
+    cleaned = re.sub(r"[^a-z0-9, ]+", " ", lowered)
+    raw_tokens = [token for token in re.split(r"[\s,]+", cleaned) if token]
+    if len(raw_tokens) < 2 or len(raw_tokens) > 4:
+        return False
+    organization_tokens = {
+        "area",
+        "bay",
+        "center",
+        "centre",
+        "clinic",
+        "corporation",
+        "creek",
+        "dental",
+        "dentistry",
+        "diagnostics",
+        "group",
+        "health",
+        "hospital",
+        "lab",
+        "laboratory",
+        "medical",
+        "osm",
+        "practice",
+        "quest",
+        "services",
+        "stone",
+        "village",
+    }
+    if any(token in organization_tokens for token in raw_tokens):
+        return False
+    if re.search(r"\b(dds|dmd|md|do)\b", lowered) or "," in raw:
+        return True
+    return len(raw_tokens) in {2, 3}
+
+
 def _preferred_display_name(aliases: list[str], fallback: str) -> str:
     for alias in aliases:
         if _looks_like_clinic_name(alias):
@@ -299,6 +339,40 @@ def _payment_source_label(payment: dict[str, Any]) -> str:
     return payment_source
 
 
+def _allows_cross_provider_confirmation(payment: dict[str, Any]) -> bool:
+    payment_source = str(payment.get("payment_source") or "").strip().lower()
+    if re.search(r"\b(hsa|fsa|withdrawal)\b", payment_source):
+        return True
+
+    payload = payment.get("normalized_payload")
+    if isinstance(payload, dict):
+        raw_row = payload.get("raw_row")
+        if isinstance(raw_row, dict):
+            source_values = " ".join(str(value).lower() for value in raw_row.values())
+            if re.search(r"\b(hsa|fsa|withdrawal)\b", source_values):
+                return True
+
+    return False
+
+
+def _allows_doctor_clinic_candidate(group: dict[str, Any], payment: dict[str, Any], day_gap: int | None) -> bool:
+    if day_gap is None or day_gap < 0 or day_gap > 7:
+        return False
+    if not _is_specific_medical_payment(payment):
+        return False
+
+    claim_values = [
+        str(value).strip()
+        for value in group.get("primary_provider_values", [])
+        if str(value).strip()
+    ]
+    payment_values = [alias for alias in _provider_aliases(payment) if alias]
+
+    has_person_claim = any(_looks_like_person_provider_name(value) for value in claim_values)
+    has_clinic_payment = any(_looks_like_clinic_name(value) for value in payment_values)
+    return has_person_claim and has_clinic_payment
+
+
 def _candidate_payments_for_group(group: dict[str, Any], payments_by_id: dict[str, dict]) -> list[dict[str, str]]:
     candidates: list[tuple[float, int, Decimal, dict[str, str]]] = []
     responsibility = group["responsibility"]
@@ -322,10 +396,16 @@ def _candidate_payments_for_group(group: dict[str, Any], payments_by_id: dict[st
             if day_gap > 45:
                 continue
             if name_score <= 0.25:
-                if not _likely_provider_payment(payment, {}):
+                if _allows_doctor_clinic_candidate(group, payment, day_gap):
+                    match_score = 0.32
+                    match_hint = "Possible bundled payment"
+                elif not _allows_cross_provider_confirmation(payment):
                     continue
-                match_score = 0.2
-                match_hint = "Provider conflict"
+                elif not _likely_provider_payment(payment, {}):
+                    continue
+                else:
+                    match_score = 0.2
+                    match_hint = "Provider conflict"
             else:
                 match_score = name_score
                 match_hint = "Possible bundled payment"

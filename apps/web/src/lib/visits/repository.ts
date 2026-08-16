@@ -28,6 +28,10 @@ type UpdateVisitDeps = {
   ) => Promise<VisitRecord | null>;
 };
 
+type DeleteVisitDeps = {
+  deleteOwnedVisit: (userId: string, visitId: string) => Promise<boolean>;
+};
+
 export async function getOwnedVisits(userId: string) {
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
@@ -77,6 +81,21 @@ export async function patchOwnedVisitRow(
   }
 
   return data;
+}
+
+export async function deleteOwnedVisitRow(userId: string, visitId: string) {
+  const supabase = createAdminSupabaseClient();
+  const { error, count } = await supabase
+    .from("visits")
+    .delete({ count: "exact" })
+    .eq("id", visitId)
+    .eq("user_id", userId);
+
+  if (error) {
+    throw new Error(`Failed to delete visit: ${error.message}`);
+  }
+
+  return Boolean(count);
 }
 
 export async function listVisits(
@@ -152,4 +171,17 @@ export async function updateVisit(
     throw new Error("Visit not found");
   }
   return updated;
+}
+
+export async function deleteVisit(
+  userId: string,
+  visitId: string,
+  deps: DeleteVisitDeps = {
+    deleteOwnedVisit: deleteOwnedVisitRow,
+  },
+) {
+  const deleted = await deps.deleteOwnedVisit(userId, visitId);
+  if (!deleted) {
+    throw new Error("Visit not found");
+  }
 }

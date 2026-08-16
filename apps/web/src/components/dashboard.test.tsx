@@ -10,6 +10,21 @@ import {
 } from "./dashboard-shell";
 
 describe("DashboardShell", () => {
+  it("renders dental and medical filters for tracked visits", () => {
+    const html = renderToStaticMarkup(
+      <DashboardShell
+        jobs={[]}
+        visits={[]}
+        findings={[]}
+        initialView="future"
+      />,
+    );
+
+    expect(html).toContain("All");
+    expect(html).toContain("Dental");
+    expect(html).toContain("Medical");
+  });
+
   it("gives Action Center items a route back to the matching Past Credits review", () => {
     const html = renderToStaticMarkup(
       <DashboardShell
@@ -169,6 +184,7 @@ describe("DashboardShell", () => {
           },
         ]}
         initialView="past"
+        pastAuditComplete
       />,
     );
 
@@ -245,6 +261,7 @@ describe("DashboardShell", () => {
           },
         ]}
         initialView="past"
+        pastAuditComplete
       />,
     );
 
@@ -265,7 +282,7 @@ describe("DashboardShell", () => {
     expect(html).not.toContain("reject-payment-match");
   });
 
-  it("renders candidate payment checkboxes selected by default with a selected-total summary", () => {
+  it("defaults to same-provider same-date candidates and leaves mismatched candidates unselected", () => {
     const html = renderToStaticMarkup(
       <DashboardShell
         jobs={[]}
@@ -296,17 +313,26 @@ describe("DashboardShell", () => {
                   amount: "142.00",
                   payment_source_label: "Apple Card",
                 },
+                {
+                  payment_id: "payment-61",
+                  provider_name: "Laima Obgyn",
+                  payment_date: "2026-06-25",
+                  amount: "61.29",
+                  payment_source_label: "Apple Card",
+                },
               ],
             },
           },
         ]}
         initialView="past"
+        pastAuditComplete
       />,
     );
 
     expect(html).toContain('type="checkbox"');
     expect(html.match(/checked=""/g)?.length).toBe(2);
     expect(html).toContain("Selected payments: $275.00 across 2 payments");
+    expect(html).toContain("Laima Obgyn");
     expect(html).toContain("Needs confirmation");
     expect(html).toContain("Confirm and save payment match");
     expect(html).toContain("These payments don&#x27;t match this visit");
@@ -317,6 +343,114 @@ describe("DashboardShell", () => {
     expect(html.indexOf("Records to check")).toBeLessThan(html.indexOf("Claim / EOB"));
     expect(html).not.toContain("Next step");
     expect(html).toContain('data-testid="reject-payment-match"');
+  });
+
+  it("separates missing-payment EOBs from the review queue", () => {
+    const html = renderToStaticMarkup(
+      <DashboardShell
+        jobs={[]}
+        visits={[]}
+        findings={[
+          {
+            id: "waiting-item",
+            provider_name: "Kenner, Julie R.",
+            finding_type: "allocation_unclear",
+            status: "open",
+            details: {
+              provider_name: "Kenner, Julie R.",
+              service_date: "2024-09-19",
+              responsibility_amount: "4.39",
+            },
+          },
+          {
+            id: "review-item",
+            provider_name: "Stone Creek Village De",
+            finding_type: "allocation_unclear",
+            status: "open",
+            details: {
+              provider_name: "Stone Creek Village De",
+              service_date: "2026-05-13",
+              responsibility_amount: "12.40",
+              candidate_payments: [
+                {
+                  payment_id: "payment-133",
+                  provider_name: "Stone Creek Village De",
+                  payment_date: "2026-05-13",
+                  amount: "133.00",
+                  payment_source_label: "Apple Card",
+                },
+              ],
+            },
+          },
+        ]}
+        initialView="past"
+        pastAuditComplete
+      />,
+    );
+
+    expect(html).toContain("Claims that need review");
+    expect(html).toContain(">1 item<");
+    expect(html).toContain("Waiting for payment evidence");
+    expect(html).toContain("Kenner, Julie R.");
+    expect(html).toContain("Waiting for payment");
+    expect(html).toContain("These EOBs were parsed correctly, but OweMe has not found reliable payment evidence for them yet.");
+  });
+
+  it("splits claim review items from payment-only items in Past Credits", () => {
+    const html = renderToStaticMarkup(
+      <DashboardShell
+        jobs={[]}
+        visits={[]}
+        findings={[
+          {
+            id: "claim-review",
+            provider_name: "LABORATORY CORPORATION OF AMERICA",
+            finding_type: "allocation_unclear",
+            status: "open",
+            details: {
+              provider_name: "LABORATORY CORPORATION OF AMERICA",
+              claim_provider_name: "LABORATORY CORPORATION OF AMERICA",
+              service_date: "2026-04-08",
+              responsibility_amount: "13.37",
+              candidate_payments: [
+                {
+                  payment_id: "payment-69",
+                  provider_name: "Laboratory Corporation of America",
+                  payment_date: "2026-04-08",
+                  amount: "69.55",
+                  payment_source_label: "Apple Card",
+                  match_hint: "Possible bundled payment",
+                },
+              ],
+            },
+          },
+          {
+            id: "payment-only",
+            provider_name: "Stone Creek Village De",
+            finding_type: "unmatched_payment",
+            status: "open",
+            details: {
+              provider_name: "Stone Creek Village De",
+              paid_amount: "275.00",
+              payment_source: "Purchase",
+              payment_date: "2026-05-13",
+            },
+          },
+        ]}
+        initialView="past"
+        pastAuditComplete
+      />,
+    );
+
+    expect(html).toContain("Claims that need review");
+    expect(html).toContain("Payments not linked to any EOB yet");
+    expect(html).toContain("LABORATORY CORPORATION OF AMERICA");
+    expect(html).toContain("EOB says you owe");
+    expect(html).toContain("Stone Creek Village De");
+    expect(html).toContain("No EOB matched yet");
+    expect(html).toContain("Payment 2026-05-13");
+    expect(html).not.toContain("Stone Creek Village De</strong></div><span style=\"color:#617086;font-size:14px\">Visit date not recorded");
+    expect(html).not.toContain("Stone Creek Village De</strong></div><span style=\"color:#617086;font-size:14px\">Visit 2026-05-13");
   });
 
   it("builds confirm-match payload with selected candidate payment IDs", () => {
@@ -352,7 +486,7 @@ describe("DashboardShell", () => {
     expect(html).toContain("Run audit");
     expect(html).not.toContain('data-testid="past-credits-upload-first-state"');
     expect(html).not.toContain("possible credits found");
-    expect(html).not.toContain("Review queue");
+    expect(html).not.toContain("Claims that need review");
     expect(html).not.toContain("Demo Provider");
     expect(html).not.toContain("Load sample claim + payment files");
 
@@ -372,7 +506,50 @@ describe("DashboardShell", () => {
       />,
     );
     expect(auditedHtml).toContain("possible credits found");
-    expect(auditedHtml).toContain("Review queue");
+    expect(auditedHtml).toContain("Claims that need review");
+  });
+
+  it("keeps personal Past Credits upload-first until the user runs a new audit or reveals saved results", () => {
+    const html = renderToStaticMarkup(
+      <DashboardShell
+        jobs={[]}
+        visits={[]}
+        findings={[{ id: "saved-credit", provider_name: "Saved Provider", finding_type: "possible_credit", details: { credit_amount: "42.00" } }]}
+        initialView="past"
+        currentUser={{
+          id: "user-1",
+          email: "person@example.com",
+          isDevTest: false,
+          isDemo: false,
+        }}
+      />,
+    );
+
+    expect(html).toContain("Start by adding the claim/EOB and payment/receipt records you want OweMe to compare.");
+    expect(html).toContain("Show saved results");
+    expect(html).not.toContain("possible credits found");
+    expect(html).not.toContain("Claims that need review");
+    expect(html).not.toContain("Saved Provider");
+
+    const auditedHtml = renderToStaticMarkup(
+      <DashboardShell
+        jobs={[]}
+        visits={[]}
+        findings={[{ id: "saved-credit", provider_name: "Saved Provider", finding_type: "possible_credit", details: { credit_amount: "42.00" } }]}
+        initialView="past"
+        pastAuditComplete
+        currentUser={{
+          id: "user-1",
+          email: "person@example.com",
+          isDevTest: false,
+          isDemo: false,
+        }}
+      />,
+    );
+
+    expect(auditedHtml).toContain("possible credits found");
+    expect(auditedHtml).toContain("Claims that need review");
+    expect(auditedHtml).toContain("Saved Provider");
   });
 
   it("renders the prototype-aligned navigation and primary views", () => {
@@ -652,6 +829,7 @@ describe("DashboardShell", () => {
           },
         ]}
         initialView="past"
+        pastAuditComplete
       />,
     );
 
@@ -673,12 +851,12 @@ describe("DashboardShell", () => {
     expect(html).not.toContain("Need review");
     expect(html).not.toContain("Unexplained payments");
     expect(html).not.toContain("current run");
-    expect(html).toContain("Review queue");
+    expect(html).toContain("Claims that need review");
     expect(html).not.toContain("Match evidence");
     expect(html).not.toContain("Confirm match");
     expect(html).not.toContain("Not the same visit");
     expect(html).not.toContain("Add receipt or payment");
-    expect(html).toContain("Unassigned payment");
+    expect(html).toContain("Payments not linked to any EOB yet");
     expect(html).not.toContain("Possible overpayment");
     expect(html).not.toContain("BAY AREA OSM payment picture");
     expect(html).toContain("ALI SALEHPOUR MD DDS");

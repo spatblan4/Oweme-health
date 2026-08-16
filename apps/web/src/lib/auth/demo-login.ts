@@ -5,7 +5,7 @@ export const DEMO_JUDGE_USER_ID = "11111111-1111-1111-1111-111111111111";
 export const DEMO_MODE_COOKIE = "oweme-demo-mode";
 
 export function createDemoLoginResponse(origin: string) {
-  const response = NextResponse.redirect(new URL("/dashboard?view=past&demoLoaded=1", origin), 303);
+  const response = NextResponse.redirect(new URL("/?demoLoaded=1", origin), 303);
   response.cookies.set(DEMO_MODE_COOKIE, "1", {
     path: "/",
     sameSite: "lax",
