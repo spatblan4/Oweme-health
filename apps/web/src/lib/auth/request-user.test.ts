@@ -22,4 +22,17 @@ describe("requireRequestUserId", () => {
       }),
     ).rejects.toThrow("Unauthorized");
   });
+
+  it("accepts the cloud demo session when the demo cookie is present", async () => {
+    const request = new Request("http://localhost/api/test", {
+      headers: { cookie: "oweme-demo-mode=1; oweme-user-id=11111111-1111-1111-1111-111111111111" },
+    });
+
+    await expect(
+      requireRequestUserId(request, {
+        getUserId: vi.fn().mockResolvedValue(null),
+        getDemoUserId: vi.fn().mockResolvedValue("11111111-1111-1111-1111-111111111111"),
+      }),
+    ).resolves.toBe("11111111-1111-1111-1111-111111111111");
+  });
 });

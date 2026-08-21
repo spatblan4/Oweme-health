@@ -57,11 +57,18 @@ export default async function DashboardPage({
 
   const hasRealSignedInUser = Boolean(user && user.id !== DEMO_JUDGE_USER_ID);
   if (isDemoMode && !hasRealSignedInUser) {
+    let demoData: DashboardData = emptyDashboardData;
+    try {
+      demoData = await loadDashboardData(DEMO_JUDGE_USER_ID);
+    } catch (error) {
+      console.warn("Demo data load failed; falling back to empty state.", error);
+    }
+
     return (
       <DashboardShell
-        jobs={[]}
-        visits={[]}
-        findings={[]}
+        jobs={demoData.jobs}
+        visits={demoData.visits}
+        findings={demoData.findings}
         initialView={initialView}
         flashMessage={flashMessage}
         pastAuditComplete={false}

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { DEMO_MODE_COOKIE } from "@/lib/auth/demo-login";
+import { DEMO_JUDGE_USER_ID, DEMO_MODE_COOKIE } from "@/lib/auth/demo-login";
 import { requireRequestUserId } from "@/lib/auth/request-user";
 import { getOwnedFileRow } from "@/lib/db/files";
 import { runSyncAudit } from "@/lib/audit/run-sync-audit";
@@ -37,7 +37,9 @@ export async function POST(request: Request) {
     });
 
     const response = NextResponse.json(result);
-    response.cookies.delete(DEMO_MODE_COOKIE);
+    if (userId !== DEMO_JUDGE_USER_ID) {
+      response.cookies.delete(DEMO_MODE_COOKIE);
+    }
     return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error";

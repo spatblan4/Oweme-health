@@ -1,9 +1,11 @@
 import { createServerClient } from "@supabase/ssr";
 
+import { DEMO_JUDGE_USER_ID, DEMO_MODE_COOKIE, ensureDemoUser } from "./demo-login";
 import { getPublicSupabaseEnv } from "./env";
 
 type RequestUserDeps = {
   getUserId?: (request: Request) => Promise<string | null>;
+  getDemoUserId?: (request: Request) => Promise<string | null>;
 };
 
 function parseCookieHeader(cookieHeader: string | null) {
@@ -49,7 +51,18 @@ async function getRequestUserId(request: Request) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  return user?.id ?? null;
+  if (user?.id) {
+    return user.id;
+  }
+
+  const demoMode = requestCookies.find((cookie) => cookie.name === DEMO_MODE_COOKIE)?.value;
+  const demoUserId = requestCookies.find((cookie) => cookie.name === "oweme-user-id")?.value;
+  if (demoMode === "1" && demoUserId === DEMO_JUDGE_USER_ID) {
+    await ensureDemoUser();
+    return DEMO_JUDGE_USER_ID;
+  }
+
+  return null;
 }
 
 export async function requireRequestUserId(
@@ -57,9 +70,14 @@ export async function requireRequestUserId(
   deps: RequestUserDeps = {},
 ) {
   const userId = await (deps.getUserId ?? getRequestUserId)(request);
-  if (!userId) {
-    throw new Error("Unauthorized");
+  if (userId) {
+    return userId;
   }
 
-  return userId;
+  const demoUserId = await deps.getDemoUserId?.(request);
+  if (demoUserId) {
+    return demoUserId;
+  }
+
+  throw new Error("Unauthorized");
 }

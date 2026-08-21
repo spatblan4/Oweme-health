@@ -96,6 +96,11 @@ describe("DashboardPage", () => {
         user: null,
       },
     });
+    mocks.loadDashboardData.mockResolvedValueOnce({
+      jobs: [],
+      visits: [],
+      findings: [],
+    });
 
     const page = await DashboardPage({
       searchParams: Promise.resolve({ view: "past", auditComplete: "1" }),
