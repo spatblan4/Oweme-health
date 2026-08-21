@@ -12,5 +12,9 @@ describe("synthetic demo dashboard data", () => {
 
     expect(total).toBe(886.5);
     expect(data.findings.filter((finding) => finding.finding_type === "possible_credit")).toHaveLength(3);
+
+    const stoneCreek = data.findings.find((finding) => finding.title === "Stone Creek Village De");
+    expect(stoneCreek?.finding_type).toBe("possible_credit");
+    expect((stoneCreek?.details as Record<string, unknown>).confirmation_source).toBe("Needs review");
   });
 });
