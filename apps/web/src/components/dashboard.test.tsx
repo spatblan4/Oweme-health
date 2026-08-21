@@ -587,7 +587,7 @@ describe("DashboardShell", () => {
     expect(html).toContain("Log new visits so OweMe can remind you when the EOB should arrive.");
     expect(html).not.toContain("Past bill audit");
     expect(html).not.toContain("Future visit tracking");
-    expect(html).toContain("$262.60");
+    expect(html).toContain("$0.00");
     expect(html).not.toContain("Account: person@example.com. No bank connection. No insurance API.");
     expect(html).toContain("My account");
     expect(html).toContain('data-testid="account-mode-menu-button"');
@@ -845,7 +845,7 @@ describe("DashboardShell", () => {
     expect(html).toContain("Add manually");
     expect(html).not.toContain("Payment / receipt");
     expect(html).not.toContain("Add row");
-    expect(html).toContain("$820.90");
+    expect(html).toContain("$623.90");
     expect(html).toContain("possible credits found");
     expect(html).not.toContain("Matched confidently");
     expect(html).not.toContain("Need review");

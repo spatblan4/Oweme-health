@@ -11,6 +11,7 @@ import {
   buildVisitEditDraft,
 } from "@/lib/dashboard/future-visit-draft";
 import { areDemoUploadsReady, getPreparedDemoUpload } from "@/lib/demo/prepared-demo-files";
+import { confirmDemoReviewFinding } from "@/lib/demo/demo-confirmation";
 
 type DashboardShellProps = {
   jobs: Array<Record<string, unknown>>;
@@ -1068,7 +1069,10 @@ export function DashboardShell({
   }, [pastAuditComplete]);
 
   const totalPossibleCredit = useMemo(() => {
-    return displayedFindingItems.reduce((sum, finding) => sum + findingCreditAmount(finding), 0);
+    return displayedFindingItems.reduce(
+      (sum, finding) => sum + (isFindingConfirmed(finding) ? findingCreditAmount(finding) : 0),
+      0,
+    );
   }, [displayedFindingItems]);
 
   const providerCount = useMemo(() => {
@@ -1670,7 +1674,16 @@ export function DashboardShell({
       } else if (action === "not_same_visit") {
         setFindingActionStatus("Demo marked this payment as not for this visit.");
       } else if (action === "confirm_match") {
-        setFindingActionStatus("Demo match confirmation saved locally.");
+        if (String(targetFinding.finding_type ?? "") === "allocation_unclear" && hasAmount(findingDetails(targetFinding).paid_amount)) {
+          setFindingItems((current) =>
+            current.map((finding) =>
+              String(finding.id) === String(targetFinding.id) ? confirmDemoReviewFinding(finding) : finding,
+            ),
+          );
+          setFindingActionStatus("Payment match confirmed. The credit is now included in the confirmed total.");
+        } else {
+          setFindingActionStatus("Demo match confirmation saved locally.");
+        }
       } else {
         setFindingActionStatus("Demo action saved locally.");
       }
@@ -3565,6 +3578,25 @@ export function DashboardShell({
                                     These payments don&apos;t match this visit
                                   </button>
                                 </>
+                              ) : selectedFinding && demoLikeAccount && String(selectedFinding.finding_type ?? "") === "allocation_unclear" && hasAmount(findingDetails(selectedFinding).paid_amount) ? (
+                                <button
+                                  type="button"
+                                  data-testid="confirm-demo-payment-match"
+                                  onClick={() => handleFindingAction("confirm_match", selectedFinding)}
+                                  disabled={isSavingFindingAction}
+                                  style={{
+                                    borderRadius: 16,
+                                    border: "none",
+                                    background: isSavingFindingAction ? "#91a0b5" : "#152235",
+                                    color: "#ffffff",
+                                    padding: "14px 16px",
+                                    fontSize: 15,
+                                    fontWeight: 700,
+                                    cursor: isSavingFindingAction ? "default" : "pointer",
+                                  }}
+                                >
+                                  {isSavingFindingAction ? "Saving..." : "Confirm this payment match"}
+                                </button>
                               ) : null}
                               {selectedFinding && hasConfirmedPayments(selectedFinding) ? (
                                 <button
