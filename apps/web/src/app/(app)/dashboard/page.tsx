@@ -69,7 +69,7 @@ export default async function DashboardPage({
       <DashboardShell
         jobs={demoData.jobs.length ? demoData.jobs : syntheticData.jobs}
         visits={[...demoData.visits, ...syntheticData.visits]}
-        findings={demoData.findings.length ? demoData.findings : syntheticData.findings}
+        findings={syntheticData.findings}
         initialView={initialView}
         flashMessage={flashMessage}
         pastAuditComplete={false}

@@ -10,6 +10,7 @@ import {
   filterProviderSuggestions,
   buildVisitEditDraft,
 } from "@/lib/dashboard/future-visit-draft";
+import { areDemoUploadsReady, getPreparedDemoUpload } from "@/lib/demo/prepared-demo-files";
 
 type DashboardShellProps = {
   jobs: Array<Record<string, unknown>>;
@@ -837,6 +838,7 @@ type FileCardProps = {
   accept: string;
   uploads: LocalUpload[];
   onFilesSelected: (files: FileList | null) => void;
+  onLoadDemoFile?: () => void;
 };
 
 function fileCard({
@@ -848,6 +850,7 @@ function fileCard({
   accept,
   uploads,
   onFilesSelected,
+  onLoadDemoFile,
 }: FileCardProps) {
   return (
     <div
@@ -906,26 +909,44 @@ function fileCard({
           </div>
         ) : null}
       </div>
-      <label
-        htmlFor={inputId}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: 18,
-          border: "1px solid #dbe4ef",
-          background: "#f8fbff",
-          color: "#152235",
-          padding: "16px 22px",
-          fontWeight: 700,
-          fontSize: 16,
-          cursor: "pointer",
-          userSelect: "none",
-        }}
-        data-testid={`${inputId}-trigger`}
-      >
-        Choose files
-      </label>
+      <div style={{ display: "grid", gap: 8 }}>
+        <label
+          htmlFor={inputId}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 18,
+            border: "1px solid #dbe4ef",
+            background: "#f8fbff",
+            color: "#152235",
+            padding: "16px 22px",
+            fontWeight: 700,
+            fontSize: 16,
+            cursor: "pointer",
+            userSelect: "none",
+          }}
+          data-testid={`${inputId}-trigger`}
+        >
+          Choose files
+        </label>
+        {onLoadDemoFile ? (
+          <button
+            type="button"
+            onClick={onLoadDemoFile}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "#0b7a75",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Load prepared demo file
+          </button>
+        ) : null}
+      </div>
       <input
         id={inputId}
         type="file"
@@ -1315,6 +1336,11 @@ export function DashboardShell({
     }));
   }
 
+  function loadPreparedDemoFile(kind: UploadKind) {
+    appendUploads(kind, [getPreparedDemoUpload(kind)]);
+    setPastAuditStatus("Prepared demo file loaded. Load both files before running the audit.");
+  }
+
   async function uploadFile(kind: UploadKind, file: File) {
     const initResponse = await fetch("/api/files/upload-init", {
       method: "POST",
@@ -1421,7 +1447,7 @@ export function DashboardShell({
   async function handleRunAudit() {
     const hasClaimUpload = selectedUploads.claim.some((upload) => upload.status === "uploaded" && upload.fileId);
     const hasPaymentUpload = selectedUploads.payment.some((upload) => upload.status === "uploaded" && upload.fileId);
-    if (currentUser?.isDemo && !hasClaimUpload && !hasPaymentUpload) {
+    if (currentUser?.isDemo && areDemoUploadsReady(selectedUploads)) {
       setPastAuditStatus("Prepared demo claim and payment records are ready. Demo audit complete.");
       setShowSavedPastResults(true);
       return;
@@ -2297,6 +2323,7 @@ export function DashboardShell({
                       accept: ACCEPTED_UPLOAD_ATTR,
                       uploads: selectedUploads.claim,
                       onFilesSelected: (files) => handleSelectedFiles("claim", files),
+                      onLoadDemoFile: currentUser?.isDemo ? () => loadPreparedDemoFile("claim") : undefined,
                     })}
                     {fileCard({
                       title: "Payments file",
@@ -2307,6 +2334,7 @@ export function DashboardShell({
                       accept: ACCEPTED_UPLOAD_ATTR,
                       uploads: selectedUploads.payment,
                       onFilesSelected: (files) => handleSelectedFiles("payment", files),
+                      onLoadDemoFile: currentUser?.isDemo ? () => loadPreparedDemoFile("payment") : undefined,
                     })}
                   </div>
 
