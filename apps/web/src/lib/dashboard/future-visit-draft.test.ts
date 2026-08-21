@@ -8,11 +8,12 @@ import {
 } from "./future-visit-draft";
 
 describe("future visit draft helpers", () => {
-  it("starts with mostly empty fields so the form does not imply known visit details", () => {
-    expect(createDefaultFutureVisitDraft()).toEqual({
+  it("starts with a usable date while leaving visit details empty", () => {
+    const draft = createDefaultFutureVisitDraft();
+
+    expect(draft).toMatchObject({
       provider: "",
       visitType: "",
-      visitDate: "",
       paidToday: "",
       paidWith: "",
       needsReimbursement: false,
@@ -20,6 +21,7 @@ describe("future visit draft helpers", () => {
       claimReadyIn: "3 weeks",
       notes: "",
     });
+    expect(draft.visitDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
   it("builds a visit payload and computes claim check date from weeks", () => {

@@ -35,10 +35,15 @@ const defaultProviderSuggestions = [
 ];
 
 export function createDefaultFutureVisitDraft(): FutureVisitDraft {
+  const today = new Date();
+  const localToday = new Date(today.getTime() - today.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 10);
+
   return {
     provider: "",
     visitType: "",
-    visitDate: "",
+    visitDate: localToday,
     paidToday: "",
     paidWith: "",
     needsReimbursement: false,
