@@ -82,7 +82,7 @@ describe("DashboardPage", () => {
     expect(mocks.loadSyntheticDashboardData).not.toHaveBeenCalled();
   });
 
-  it("keeps judge demo on the upload-first state even when auditComplete is present", async () => {
+  it("keeps judge demo on prepared findings even when auditComplete is present", async () => {
     mocks.cookies.mockResolvedValueOnce({
       get: (name: string) =>
         name === DEMO_MODE_COOKIE
@@ -112,10 +112,11 @@ describe("DashboardPage", () => {
       isDevTest: false,
       isDemo: true,
     });
-    expect(page.props.findings).toEqual([]);
+    expect(page.props.findings).toHaveLength(1);
+    expect(page.props.findings[0].id).toBe("demo-finding-1");
     expect(page.props.jobs).toEqual([]);
     expect(page.props.visits).toEqual([]);
     expect(page.props.pastAuditComplete).toBe(false);
-    expect(mocks.loadSyntheticDashboardData).not.toHaveBeenCalled();
+    expect(mocks.loadSyntheticDashboardData).toHaveBeenCalled();
   });
 });

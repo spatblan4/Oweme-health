@@ -1421,6 +1421,11 @@ export function DashboardShell({
   async function handleRunAudit() {
     const hasClaimUpload = selectedUploads.claim.some((upload) => upload.status === "uploaded" && upload.fileId);
     const hasPaymentUpload = selectedUploads.payment.some((upload) => upload.status === "uploaded" && upload.fileId);
+    if (currentUser?.isDemo && !hasClaimUpload && !hasPaymentUpload) {
+      setPastAuditStatus("Prepared demo claim and payment records are ready. Demo audit complete.");
+      setShowSavedPastResults(true);
+      return;
+    }
     if (!hasClaimUpload || !hasPaymentUpload) {
       setPastAuditStatus(
         !hasClaimUpload && !hasPaymentUpload
@@ -2328,7 +2333,9 @@ export function DashboardShell({
                     {!isRunningAudit ? (
                       <span style={{ color: "#617086", fontSize: 16 }}>
                         {pastAuditStatus ||
-                          (selectedUploads.claim.length || selectedUploads.payment.length
+                          (currentUser?.isDemo && !selectedUploads.claim.length && !selectedUploads.payment.length
+                            ? "Prepared demo claim and payment records are ready."
+                            : selectedUploads.claim.length || selectedUploads.payment.length
                             ? "Files selected."
                             : "No files selected.")}
                       </span>
