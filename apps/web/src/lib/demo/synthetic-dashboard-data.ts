@@ -50,7 +50,7 @@ export function loadSyntheticDashboardData() {
       {
         id: "demo-finding-3",
         provider_name: "Stone Creek Village De",
-        finding_type: "possible_credit",
+        finding_type: "allocation_unclear",
         severity: "attention",
         status: "open",
         title: "Stone Creek Village De",
